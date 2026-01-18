@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+sourcerack.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# SQLite database
+*.db
+*.sqlite
+*.sqlite3
+
+# Qdrant storage (local)
+qdrant_storage/
+
+# Temporary files
+*.tmp
+.tmp/
+/tmp/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# npm
+.npm/
+npm-debug.log*
+
+# Optional UI (separate project)
+ui/node_modules/
+ui/dist/
+ui/.next/
+
+# Local cache (fastembed models, etc.)
+local_cache/
+
+# Scratch files
+r.txt
+
+# AI tool configs (personal)
+.claude/
+.serena/
+.specify/
+
+# Internal specs/planning docs
+specs/

@@ -1,0 +1,51 @@
+{
+  "qdrant": {
+    "url": "http://localhost:6333",
+    "collection": "code_chunks"
+  },
+  "embedding": {
+    "enabled": true,
+    "provider": "remote",
+    "remoteUrl": "http://127.0.0.1:8080/embed",
+    "model": "all-MiniLM-L6-v2",
+    "batchSize": 32
+  },
+  "indexing": {
+    "chunkSize": {
+      "min": 512,
+      "max": 1024
+    },
+    "languages": [
+      "javascript",
+      "typescript",
+      "python",
+      "go",
+      "rust",
+      "java",
+      "c",
+      "cpp"
+    ],
+    "excludePatterns": [
+      "**/node_modules/**",
+      "**/.git/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/*.min.js"
+    ]
+  },
+  "query": {
+    "defaultLimit": 50,
+    "maxLimit": 100
+  },
+  "logging": {
+    "level": "info",
+    "file": "./sourcerack.log",
+    "pretty": false
+  },
+  "gc": {
+    "retentionDays": 30
+  },
+  "storage": {
+    "databasePath": "./sourcerack.db"
+  }
+}

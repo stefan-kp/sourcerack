@@ -1,0 +1,200 @@
+# Language Registry for SourceRack
+# Defines all supported languages with their tree-sitter grammar packages
+#
+# Each entry:
+#   - extensions: File extensions that map to this language
+#   - package: NPM package name for the tree-sitter grammar
+#   - submodule: Optional submodule within the package (e.g., typescript has 'typescript' and 'tsx')
+#   - tier: 'core' (shipped by default) or 'optional' (installed on demand)
+#   - sourcePaths: Typical source directories for this language (used for untracked file detection)
+#
+# Core languages are installed with SourceRack by default.
+# Optional languages are installed automatically when first encountered.
+
+# === Core Languages (Tier 1 - Default Installation) ===
+
+javascript:
+  extensions: [".js", ".jsx", ".mjs", ".cjs"]
+  package: "tree-sitter-javascript"
+  tier: core
+  sourcePaths: ["src/", "lib/", "app/", "pages/", "components/", "test/", "tests/", "__tests__/"]
+
+typescript:
+  extensions: [".ts", ".mts", ".cts"]
+  package: "tree-sitter-typescript"
+  submodule: "typescript"
+  tier: core
+  sourcePaths: ["src/", "lib/", "app/", "pages/", "components/", "test/", "tests/", "__tests__/"]
+
+tsx:
+  extensions: [".tsx"]
+  package: "tree-sitter-typescript"
+  submodule: "tsx"
+  tier: core
+  sourcePaths: ["src/", "lib/", "app/", "pages/", "components/", "test/", "tests/", "__tests__/"]
+
+python:
+  extensions: [".py", ".pyw", ".pyi"]
+  package: "tree-sitter-python"
+  tier: core
+  sourcePaths: ["src/", "lib/", "tests/", "test/", "app/"]
+
+# === Optional Languages (Tier 2 - Installed on Demand) ===
+
+go:
+  extensions: [".go"]
+  package: "tree-sitter-go"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["cmd/", "pkg/", "internal/", "api/", "test/"]
+
+rust:
+  extensions: [".rs"]
+  package: "tree-sitter-rust"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/", "tests/", "benches/", "examples/"]
+
+java:
+  extensions: [".java"]
+  package: "tree-sitter-java"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/main/java/", "src/test/java/", "src/"]
+
+c:
+  extensions: [".c", ".h"]
+  package: "tree-sitter-c"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/", "include/", "lib/", "test/", "tests/"]
+
+cpp:
+  extensions: [".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h++"]
+  package: "tree-sitter-cpp"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/", "include/", "lib/", "test/", "tests/"]
+
+c_sharp:
+  extensions: [".cs"]
+  package: "tree-sitter-c-sharp"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/", "lib/", "test/", "tests/"]
+
+ruby:
+  extensions: [".rb", ".rake", ".gemspec"]
+  package: "tree-sitter-ruby"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["app/", "lib/", "src/", "spec/", "test/"]
+
+php:
+  extensions: [".php", ".phtml"]
+  package: "tree-sitter-php"
+  submodule: "php"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/", "app/", "lib/", "tests/", "public/"]
+
+kotlin:
+  extensions: [".kt", ".kts"]
+  package: "tree-sitter-kotlin"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/main/kotlin/", "src/test/kotlin/", "src/"]
+
+swift:
+  extensions: [".swift"]
+  package: "tree-sitter-swift"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["Sources/", "Tests/", "src/"]
+
+scala:
+  extensions: [".scala", ".sc"]
+  package: "tree-sitter-scala"
+  version: "^0.21.0"
+  tier: optional
+  sourcePaths: ["src/main/scala/", "src/test/scala/", "src/"]
+
+# === Configuration/Data Languages (Tier 3) ===
+
+json:
+  extensions: [".json", ".jsonc"]
+  package: "tree-sitter-json"
+  version: "^0.21.0"
+  tier: optional
+
+yaml:
+  extensions: [".yaml", ".yml"]
+  package: "@tree-sitter-grammars/tree-sitter-yaml"
+  version: "^0.7.0"
+  tier: optional
+
+toml:
+  extensions: [".toml"]
+  package: "@tree-sitter-grammars/tree-sitter-toml"
+  version: "^0.7.0"
+  tier: optional
+
+html:
+  extensions: [".html", ".htm"]
+  package: "tree-sitter-html"
+  version: "^0.23.0"
+  tier: optional
+
+css:
+  extensions: [".css"]
+  package: "tree-sitter-css"
+  version: "^0.21.0"
+  tier: optional
+
+scss:
+  extensions: [".scss"]
+  package: "tree-sitter-scss"
+  version: "^0.21.0"
+  tier: optional
+
+# === Shell/Script Languages ===
+
+bash:
+  extensions: [".sh", ".bash", ".zsh"]
+  package: "tree-sitter-bash"
+  version: "^0.21.0"
+  tier: optional
+
+lua:
+  extensions: [".lua"]
+  package: "tree-sitter-lua"
+  version: "^0.21.0"
+  tier: optional
+
+# === Infrastructure Languages ===
+
+hcl:
+  extensions: [".hcl", ".tf", ".tfvars"]
+  package: "tree-sitter-hcl"
+  version: "^0.21.0"
+  tier: optional
+
+dockerfile:
+  extensions: ["Dockerfile", ".dockerfile"]
+  package: "tree-sitter-dockerfile"
+  version: "^0.21.0"
+  tier: optional
+
+sql:
+  extensions: [".sql"]
+  package: "tree-sitter-sql"
+  version: "^0.21.0"
+  tier: optional
+
+# === Documentation Languages ===
+
+markdown:
+  extensions: [".md", ".markdown"]
+  package: "@tree-sitter-grammars/tree-sitter-markdown"
+  version: "^0.3.2"
+  tier: optional
