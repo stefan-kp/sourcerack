@@ -124,6 +124,8 @@ export interface IndexingOptions {
   onProgress?: (event: IndexingProgressEvent) => void;
   /** Skip embedding generation (SQI-only indexing) */
   skipEmbeddings?: boolean;
+  /** Force re-indexing even if commit is already indexed */
+  force?: boolean;
 }
 
 /**

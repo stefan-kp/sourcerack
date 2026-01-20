@@ -361,8 +361,14 @@ export class MetadataStorage {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('UNIQUE constraint failed')) {
+        // Check if it's in_progress (aborted) or complete
+        const existing = this.getIndexedCommit(repoId, commitSha);
+        const status = existing?.status ?? 'unknown';
+        const hint = status === 'in_progress' 
+          ? 'A previous indexing was interrupted. Use --force to re-index.'
+          : 'Use --force to re-index this commit.';
         throw new StorageError(
-          `Commit already indexed: ${commitSha}`,
+          `Commit already indexed (status: ${status}): ${commitSha.slice(0, 8)}. ${hint}`,
           StorageErrorCode.DUPLICATE,
           error instanceof Error ? error : undefined
         );
@@ -466,7 +472,7 @@ export class MetadataStorage {
   }
 
   /**
-   * Delete an indexed commit record
+   * Delete an indexed commit record by ID
    */
   deleteIndexedCommit(id: number): boolean {
     const result = this.db
@@ -474,6 +480,31 @@ export class MetadataStorage {
       .run(id);
 
     return result.changes > 0;
+  }
+
+  /**
+   * Delete an indexed commit and its chunk references by repo and commit SHA
+   * Used for --force re-indexing
+   * @returns true if a commit was deleted
+   */
+  deleteCommitRecord(repoId: string, commitSha: string): boolean {
+    const commit = this.getIndexedCommit(repoId, commitSha);
+    if (!commit) {
+      return false;
+    }
+
+    // Delete chunk references and commit in transaction
+    const deleteCommit = this.db.transaction(() => {
+      this.db
+        .prepare('DELETE FROM chunk_refs WHERE commit_id = ?')
+        .run(commit.id);
+      this.db
+        .prepare('DELETE FROM indexed_commits WHERE id = ?')
+        .run(commit.id);
+    });
+
+    deleteCommit();
+    return true;
   }
 
   /**

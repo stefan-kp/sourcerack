@@ -24,6 +24,7 @@ interface IndexOptions {
   json?: boolean;
   quiet?: boolean;
   reset?: boolean;
+  force?: boolean;
 }
 
 /**
@@ -149,6 +150,7 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
         repoId: repo.id,
         commitSha: repoContext.commitSha,
         onProgress: progress.createCallback(),
+        force: options.force === true,
       };
       if (options.branch !== undefined) {
         indexingOptions.branch = options.branch;
@@ -188,6 +190,7 @@ export function registerIndexCommand(program: Command): void {
     .option('-c, --commit <ref>', 'Commit, branch, or tag to index (default: HEAD)')
     .option('-b, --branch <name>', 'Branch label for reference')
     .option('--reset', 'Delete all indexed data for this repository')
+    .option('--force', 'Force re-indexing even if commit was already indexed')
     .option('--json', 'Output in JSON format')
     .option('-q, --quiet', 'Suppress progress output')
     .action(async (path: string | undefined, options: IndexOptions) => {

@@ -152,7 +152,7 @@ export class Indexer {
    * Index a commit (full indexing)
    */
   async indexCommit(options: IndexingOptions): Promise<IndexingResult> {
-    const { repoId, commitSha, branch, onProgress, skipEmbeddings } = options;
+    const { repoId, commitSha, branch, onProgress, skipEmbeddings, force } = options;
     const startTime = Date.now();
     const lockHolder = `indexer-${Date.now()}`;
 
@@ -185,23 +185,32 @@ export class Indexer {
     try {
       emitProgress({ type: 'started' });
 
-      // Check if already indexed (idempotent)
-      if (this.metadata.isCommitIndexed(repoId, commitSha)) {
-        emitProgress({
-          type: 'completed',
-          filesProcessed: 0,
-          chunksCreated: 0,
-          chunksReused: 0,
-        });
-        return {
-          success: true,
-          repoId,
-          commitSha,
-          filesProcessed: 0,
-          chunksCreated: 0,
-          chunksReused: 0,
-          durationMs: Date.now() - startTime,
-        };
+      // Handle force re-indexing
+      if (force) {
+        const existingCommit = this.metadata.getIndexedCommit(repoId, commitSha);
+        if (existingCommit) {
+          console.log(`🔄 Force re-indexing: removing existing index for ${commitSha.slice(0, 8)}`);
+          this.metadata.deleteCommitRecord(repoId, commitSha);
+        }
+      } else {
+        // Check if already indexed (idempotent)
+        if (this.metadata.isCommitIndexed(repoId, commitSha)) {
+          emitProgress({
+            type: 'completed',
+            filesProcessed: 0,
+            chunksCreated: 0,
+            chunksReused: 0,
+          });
+          return {
+            success: true,
+            repoId,
+            commitSha,
+            filesProcessed: 0,
+            chunksCreated: 0,
+            chunksReused: 0,
+            durationMs: Date.now() - startTime,
+          };
+        }
       }
 
       // Verify commit exists

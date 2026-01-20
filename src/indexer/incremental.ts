@@ -191,7 +191,7 @@ export class IncrementalIndexer {
       // Verify base commit is indexed
       if (!this.metadata.isCommitIndexed(repoId, baseCommitSha)) {
         throw new IndexerError(
-          `Base commit not indexed: ${baseCommitSha}`,
+          `Base commit not indexed: ${baseCommitSha.slice(0, 8)}. Run 'sourcerack index -c ${baseCommitSha.slice(0, 8)}' first.`,
           IndexerErrorCode.COMMIT_NOT_FOUND
         );
       }

@@ -467,11 +467,11 @@ export class StructuredQueryEngine {
     // Get commit record
     const commitRecord = this.metadata.getIndexedCommit(repo.id, commitSha);
     if (!commitRecord) {
-      return { error: `Commit not indexed: ${commitSha}` };
+      return { error: `Commit not indexed: ${commitSha.slice(0, 8)}. Run 'sourcerack index' to index this commit.` };
     }
 
     if (commitRecord.status !== 'complete') {
-      return { error: `Indexing not complete for commit: ${commitSha}` };
+      return { error: `Indexing incomplete for commit: ${commitSha.slice(0, 8)} (status: ${commitRecord.status}). Run 'sourcerack index --force' to re-index.` };
     }
 
     return { commitId: commitRecord.id, commitSha, git };

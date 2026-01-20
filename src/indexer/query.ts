@@ -472,7 +472,7 @@ export class QueryOrchestrator {
         results: [],
         totalCount: 0,
         nextCursor: null,
-        error: `Commit ${commitSha} is not indexed. Please index the commit first.`,
+        error: `Commit ${commitSha.slice(0, 8)} is not indexed. Run 'sourcerack index' to index this commit.`,
       };
     }
 
