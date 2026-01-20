@@ -24,6 +24,16 @@ const DIMENSIONS = 384;
 describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
   let storage: QdrantStorage;
 
+  // Helper to generate test UUIDs (Qdrant requires UUID or integer IDs)
+  function testId(name: string): string {
+    // Use a deterministic UUID based on test name for reproducibility
+    const hash = name.split('').reduce((acc, char) => {
+      return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
+    }, 0);
+    const hex = Math.abs(hash).toString(16).padStart(8, '0');
+    return `${hex.slice(0, 8)}-${hex.slice(0, 4)}-4${hex.slice(1, 4)}-8${hex.slice(1, 4)}-${hex.padEnd(12, '0').slice(0, 12)}`;
+  }
+
   // Helper to generate deterministic mock vectors
   // Different content produces different vectors
   function mockVector(content: string): number[] {
@@ -57,7 +67,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
     // Insert test code chunks representing a small codebase
     const testChunks: ChunkUpsert[] = [
       {
-        id: 'user-service-get',
+        id: testId('user-service-get'),
         vector: mockVector('async function getUserById(id: string): Promise<User>'),
         payload: {
           repo_id: 'repo-main',
@@ -67,6 +77,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'getUserById',
           symbol_type: 'function',
           language: 'typescript',
+          content_type: 'code',
           start_line: 10,
           end_line: 25,
           content: `async function getUserById(id: string): Promise<User> {
@@ -77,7 +88,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
         },
       },
       {
-        id: 'user-service-create',
+        id: testId('user-service-create'),
         vector: mockVector('async function createUser(data: CreateUserInput): Promise<User>'),
         payload: {
           repo_id: 'repo-main',
@@ -87,6 +98,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'createUser',
           symbol_type: 'function',
           language: 'typescript',
+          content_type: 'code',
           start_line: 27,
           end_line: 40,
           content: `async function createUser(data: CreateUserInput): Promise<User> {
@@ -98,7 +110,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
         },
       },
       {
-        id: 'user-model',
+        id: testId('user-model'),
         vector: mockVector('interface User { id: string; email: string; name: string }'),
         payload: {
           repo_id: 'repo-main',
@@ -108,6 +120,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'User',
           symbol_type: 'interface',
           language: 'typescript',
+          content_type: 'code',
           start_line: 1,
           end_line: 10,
           content: `interface User {
@@ -119,7 +132,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
         },
       },
       {
-        id: 'order-service-get',
+        id: testId('order-service-get'),
         vector: mockVector('async function getOrderById(orderId: string): Promise<Order>'),
         payload: {
           repo_id: 'repo-main',
@@ -129,6 +142,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'getOrderById',
           symbol_type: 'function',
           language: 'typescript',
+          content_type: 'code',
           start_line: 15,
           end_line: 30,
           content: `async function getOrderById(orderId: string): Promise<Order> {
@@ -139,7 +153,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
         },
       },
       {
-        id: 'python-auth',
+        id: testId('python-auth'),
         vector: mockVector('def authenticate_user(username: str, password: str) -> User'),
         payload: {
           repo_id: 'repo-main',
@@ -149,6 +163,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'authenticate_user',
           symbol_type: 'function',
           language: 'python',
+          content_type: 'code',
           start_line: 20,
           end_line: 35,
           content: `def authenticate_user(username: str, password: str) -> User:
@@ -159,7 +174,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
         },
       },
       {
-        id: 'other-repo-chunk',
+        id: testId('other-repo-chunk'),
         vector: mockVector('function processData()'),
         payload: {
           repo_id: 'repo-other',
@@ -169,6 +184,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
           symbol: 'processData',
           symbol_type: 'function',
           language: 'typescript',
+          content_type: 'code',
           start_line: 1,
           end_line: 10,
           content: 'function processData() { /* ... */ }',
@@ -203,8 +219,8 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
       });
 
       const v1Ids = v1Results.map((r) => r.id);
-      expect(v1Ids).toContain('user-service-get');
-      expect(v1Ids).not.toContain('order-service-get');
+      expect(v1Ids).toContain(testId('user-service-get'));
+      expect(v1Ids).not.toContain(testId('order-service-get'));
 
       // Search in v1.1 - should include orderService
       const v1_1Results = await storage.search(queryVector, {
@@ -213,8 +229,8 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
       });
 
       const v1_1Ids = v1_1Results.map((r) => r.id);
-      expect(v1_1Ids).toContain('user-service-get');
-      expect(v1_1Ids).toContain('order-service-get');
+      expect(v1_1Ids).toContain(testId('user-service-get'));
+      expect(v1_1Ids).toContain(testId('order-service-get'));
     });
 
     it('should only return results from specified repository', async () => {
@@ -227,7 +243,7 @@ describe.skipIf(SKIP_TESTS)('Semantic Search Integration', () => {
 
       // Should not include chunks from other repo
       const ids = results.map((r) => r.id);
-      expect(ids).not.toContain('other-repo-chunk');
+      expect(ids).not.toContain(testId('other-repo-chunk'));
     });
 
     it('should return empty results for non-indexed commit', async () => {

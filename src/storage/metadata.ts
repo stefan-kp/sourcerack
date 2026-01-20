@@ -686,6 +686,20 @@ export class MetadataStorage {
     insertMany(chunkIds);
   }
 
+
+  /**
+   * Delete blob_chunks entries for the given blob SHAs.
+   * Used to clean up orphaned entries when chunks no longer exist in Qdrant.
+   */
+  deleteBlobChunks(blobShas: string[]): void {
+    if (blobShas.length === 0) return;
+
+    const placeholders = blobShas.map(() => '?').join(',');
+    this.db
+      .prepare(`DELETE FROM blob_chunks WHERE blob_sha IN (${placeholders})`)
+      .run(...blobShas);
+  }
+
   /**
    * Get chunk IDs for a set of blob SHAs
    */

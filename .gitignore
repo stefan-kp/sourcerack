@@ -66,3 +66,6 @@ r.txt
 
 # Internal specs/planning docs
 specs/
+
+# Local test repositories (not committed)
+test_repos/

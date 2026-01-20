@@ -10,6 +10,10 @@ import { SymbolExtractor } from './base.js';
 import { TypeScriptExtractor } from './typescript.js';
 import { PythonExtractor } from './python.js';
 import { RubyExtractor } from './ruby.js';
+// NOTE: DartExtractor is ready but disabled - tree-sitter-dart@1.0.0 is
+// incompatible with tree-sitter@0.21+. Re-enable when a compatible grammar
+// is available.
+// import { DartExtractor } from './dart.js';
 import { FileExtractionResult } from '../types.js';
 import { parseCode, initializeTreeSitter, ensureLanguageGrammar } from '../../parser/tree-sitter.js';
 
@@ -25,6 +29,8 @@ export class ExtractorRegistry {
     this.register(new TypeScriptExtractor());
     this.register(new PythonExtractor());
     this.register(new RubyExtractor());
+    // Dart extractor ready but disabled - see import comment above
+    // this.register(new DartExtractor());
   }
 
   /**

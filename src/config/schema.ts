@@ -12,7 +12,7 @@ import { getDefaultDatabasePath } from './paths.js';
  */
 export const QdrantConfigSchema = z.object({
   url: z.string().url().default('http://localhost:6333'),
-  collection: z.string().min(1).default('code_chunks'),
+  collection: z.string().min(1).default('sourcerack'),
   apiKey: z.string().optional(),
 });
 

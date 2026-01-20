@@ -746,8 +746,12 @@ export class RubyExtractor extends SymbolExtractor {
 
     if (!symbolName || symbolName.length === 0) return null;
 
-    // Skip Ruby builtins
-    if (RUBY_BUILTINS.has(symbolName)) return null;
+    // Determine usage type first to check if it's a mixin
+    const usageType = this.determineUsageType(node);
+
+    // Skip Ruby builtins, except for mixin usages (include/extend/prepend)
+    // where we want to track standard library modules like Comparable, Enumerable
+    if (RUBY_BUILTINS.has(symbolName) && usageType !== 'extend') return null;
 
     // Skip lowercase identifiers that are likely local variables
     if (node.type === 'identifier' && /^[a-z_][a-z0-9_]*$/.test(symbolName)) {
@@ -756,7 +760,6 @@ export class RubyExtractor extends SymbolExtractor {
     }
 
     const location = this.getLocation(node);
-    const usageType = this.determineUsageType(node);
     const enclosingSymbol = this.findEnclosingSymbolName(node);
 
     return {

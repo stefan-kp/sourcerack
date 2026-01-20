@@ -255,21 +255,50 @@ export class Indexer {
         }
       }
 
-      // For files with indexed blobs, reuse chunk IDs directly (only if embeddings enabled)
+      // For files with indexed blobs, try to reuse chunk IDs (only if embeddings enabled)
+      // Track blobs that have orphaned chunk references (chunks no longer in Qdrant)
+      const orphanedBlobs = new Set<string>();
+      
       if (embeddingsEnabled && filesWithIndexedBlobs.length > 0) {
         const indexedBlobShas = filesWithIndexedBlobs.map((f) => f.sha);
         const blobChunkMap = this.metadata.getChunksForBlobs(indexedBlobShas);
         
-        // Collect all reused chunk IDs
+        // First, verify which chunks actually exist in Qdrant
+        const allChunkIds: string[] = [];
+        for (const [, chunkIds] of blobChunkMap) {
+          allChunkIds.push(...chunkIds);
+        }
+        
+        // Batch check which chunks exist
+        const existingChunks = allChunkIds.length > 0 
+          ? await this.vectors!.chunksExist(allChunkIds)
+          : new Set<string>();
+        
+        // Collect valid reused chunk IDs and identify orphaned blobs
         const reusedChunkIds: string[] = [];
         for (const blobSha of indexedBlobShas) {
           const chunkIds = blobChunkMap.get(blobSha);
-          if (chunkIds) {
-            reusedChunkIds.push(...chunkIds);
+          if (chunkIds && chunkIds.length > 0) {
+            // Check if ALL chunks for this blob exist
+            const allExist = chunkIds.every((id) => existingChunks.has(id));
+            if (allExist) {
+              reusedChunkIds.push(...chunkIds);
+            } else {
+              // Some chunks are missing - mark blob as orphaned
+              orphanedBlobs.add(blobSha);
+            }
+          } else {
+            // No chunks in mapping - this shouldn't happen but handle it
+            orphanedBlobs.add(blobSha);
           }
         }
 
-        // Add chunk references to new commit
+        // Clean up orphaned blob_chunks entries
+        if (orphanedBlobs.size > 0) {
+          this.metadata.deleteBlobChunks(Array.from(orphanedBlobs));
+        }
+
+        // Add chunk references to new commit (only for valid chunks)
         if (reusedChunkIds.length > 0) {
           this.metadata.addChunkRefs(commitRecord.id, reusedChunkIds);
 
@@ -278,7 +307,7 @@ export class Indexer {
             try {
               await this.vectors!.addCommitToChunk(chunkId, commitSha);
             } catch {
-              // Chunk might have been deleted, will be recreated if needed
+              // Chunk might have been deleted between check and update - rare race condition
             }
           }
         }
@@ -288,10 +317,18 @@ export class Indexer {
           chunksReused: reusedChunkIds.length,
         });
       }
+      
+      // Move files with orphaned blobs back to filesToParse
+      for (const file of filesWithIndexedBlobs) {
+        if (orphanedBlobs.has(file.sha)) {
+          filesToParse.push(file);
+        }
+      }
 
       // Process files that need parsing
       const allProcessedChunks: ProcessedChunk[] = [];
-      let filesProcessed = filesWithIndexedBlobs.length; // Count skipped files as processed
+      // Count reused files as already processed (exclude orphaned ones that got moved to filesToParse)
+      let filesProcessed = filesWithIndexedBlobs.length - orphanedBlobs.size;
 
       // Collect files for SQI batch processing
       const sqiFiles: { path: string; content: string }[] = [];

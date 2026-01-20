@@ -101,7 +101,7 @@ php:
 kotlin:
   extensions: [".kt", ".kts"]
   package: "tree-sitter-kotlin"
-  version: "^0.21.0"
+  version: "^0.3.0"
   tier: optional
   sourcePaths: ["src/main/kotlin/", "src/test/kotlin/", "src/"]
 
@@ -118,6 +118,16 @@ scala:
   version: "^0.21.0"
   tier: optional
   sourcePaths: ["src/main/scala/", "src/test/scala/", "src/"]
+
+# Note: tree-sitter-dart@1.0.0 is incompatible with tree-sitter@0.21+
+# Symbol extraction is prepared but disabled until a compatible grammar exists.
+# Embeddings still work for semantic search.
+dart:
+  extensions: [".dart"]
+  package: "tree-sitter-dart"
+  version: "^1.0.0"
+  tier: optional
+  sourcePaths: ["lib/", "test/", "bin/"]
 
 # === Configuration/Data Languages (Tier 3) ===
 
