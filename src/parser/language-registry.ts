@@ -342,7 +342,8 @@ export class LanguageRegistry {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error(`Failed to install grammar ${langDef.package}:`, error);
+      // Log a clean warning instead of the full error object
+      console.warn(`⚠️  Grammar install failed for ${langDef.package}: ${errorMessage.split('\n')[0]}`);
 
       return {
         success: false,

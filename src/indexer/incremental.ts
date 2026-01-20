@@ -257,7 +257,7 @@ export class IncrementalIndexer {
         const installResults = await preInstallGrammars(filePathsToProcess);
         if (installResults.failed.length > 0) {
           console.warn(
-            `Failed to install grammars: ${installResults.failed.join(', ')}`
+            `⚠️  Failed to install grammars: ${installResults.failed.join(', ')} - files with these languages will be skipped`
           );
         }
         if (installResults.installed.length > 0) {

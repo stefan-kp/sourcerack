@@ -243,7 +243,7 @@ export class Indexer {
         const installResults = await preInstallGrammars(filePaths);
         if (installResults.failed.length > 0) {
           console.warn(
-            `Failed to install grammars: ${installResults.failed.join(', ')}`
+            `⚠️  Failed to install grammars: ${installResults.failed.join(', ')} - files with these languages will be skipped`
           );
         }
         if (installResults.installed.length > 0) {
