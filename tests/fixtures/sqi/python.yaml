@@ -1,0 +1,134 @@
+# Python Symbol Extraction Tests
+name: "Python Symbol Extraction"
+language: python
+description: "Tests symbol extraction for Python"
+
+cases:
+  - name: "simple function"
+    code: |
+      def greet(name: str) -> str:
+          return f"Hello, {name}!"
+    expect:
+      symbols:
+        - name: greet
+          kind: function
+          return_type: str
+          parameters:
+            - name: name
+              # Note: Python extractor doesn't capture parameter types
+
+  - name: "async function"
+    code: |
+      async def fetch_user(user_id: str) -> dict:
+          response = await http_client.get(f"/users/{user_id}")
+          return response.json()
+    expect:
+      symbols:
+        - name: fetch_user
+          kind: function
+          is_async: true
+          return_type: dict
+
+  - name: "class with methods"
+    code: |
+      class UserService:
+          """A service for managing users."""
+          
+          def __init__(self, db: Database):
+              self.db = db
+          
+          async def get_user(self, user_id: str) -> User:
+              return await self.db.find(user_id)
+          
+          def _private_helper(self):
+              pass
+    expect:
+      symbols:
+        - name: UserService
+          kind: class
+          children:
+            - name: __init__
+              kind: method
+            - name: get_user
+              kind: method
+              is_async: true
+            - name: _private_helper
+              kind: method
+
+  - name: "decorated function"
+    code: |
+      @staticmethod
+      def helper_function():
+          pass
+      
+      @property
+      def value(self):
+          return self._value
+    expect:
+      symbols:
+        - name: helper_function
+          kind: function
+        - name: value
+          kind: function
+
+  - name: "class inheritance"
+    code: |
+      class Animal:
+          def speak(self):
+              pass
+      
+      class Dog(Animal):
+          def speak(self):
+              return "Woof!"
+    expect:
+      symbols:
+        - name: Animal
+          kind: class
+          children:
+            - name: speak
+              kind: method
+        - name: Dog
+          kind: class
+          children:
+            - name: speak
+              kind: method
+
+  - name: "module level variable"
+    code: |
+      MAX_RETRIES: int = 3
+      DEFAULT_TIMEOUT = 30.0
+    expect:
+      symbols:
+        # Python extractor reports typed variables as constants
+        - name: MAX_RETRIES
+          kind: constant
+        - name: DEFAULT_TIMEOUT
+          kind: constant
+
+  - name: "function with complex types"
+    code: |
+      def process_items(
+          items: list[str],
+          callback: Callable[[str], None],
+          options: dict[str, Any] | None = None
+      ) -> tuple[int, list[str]]:
+          pass
+    expect:
+      symbols:
+        - name: process_items
+          kind: function
+          # Note: Complex return types may be truncated or simplified
+
+  - name: "nested class"
+    code: |
+      class Outer:
+          class Inner:
+              def method(self):
+                  pass
+    expect:
+      symbols:
+        - name: Outer
+          kind: class
+          children:
+            - name: Inner
+              kind: class

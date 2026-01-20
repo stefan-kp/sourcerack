@@ -1,0 +1,216 @@
+# Dart Symbol Extraction Tests
+# NOTE: Currently SKIPPED - requires tree-sitter 0.25+ upgrade
+# @sengac/tree-sitter-dart requires @sengac/tree-sitter@^0.25.10
+# but sourcerack uses tree-sitter@0.21.1
+name: "Dart Symbol Extraction"
+language: dart
+description: "Tests symbol extraction for Dart using @sengac/tree-sitter-dart"
+skip: true  # Remove when tree-sitter is upgraded to 0.25+
+
+cases:
+  - name: "simple function"
+    code: |
+      String greet(String name) {
+        return 'Hello, $name!';
+      }
+    expect:
+      symbols:
+        - name: greet
+          kind: function
+          return_type: String
+          parameters:
+            - name: name
+              type: String
+
+  - name: "async function"
+    code: |
+      Future<User> fetchUser(String id) async {
+        final response = await http.get('/users/$id');
+        return User.fromJson(response.body);
+      }
+    expect:
+      symbols:
+        - name: fetchUser
+          kind: function
+          is_async: true
+          return_type: Future<User>
+
+  - name: "class with constructor"
+    code: |
+      class User {
+        final String name;
+        final int age;
+        
+        User(this.name, this.age);
+        
+        String greet() => 'Hello, $name!';
+      }
+    expect:
+      symbols:
+        - name: User
+          kind: class
+          children:
+            - name: name
+              kind: property
+            - name: age
+              kind: property
+            - name: greet
+              kind: method
+
+  - name: "named constructor"
+    code: |
+      class Point {
+        final double x;
+        final double y;
+        
+        Point(this.x, this.y);
+        Point.origin() : x = 0, y = 0;
+        Point.fromJson(Map<String, dynamic> json)
+            : x = json['x'], y = json['y'];
+      }
+    expect:
+      symbols:
+        - name: Point
+          kind: class
+          children:
+            - name: x
+              kind: property
+            - name: y
+              kind: property
+            - name: origin
+              kind: constructor
+            - name: fromJson
+              kind: constructor
+
+  - name: "abstract class"
+    code: |
+      abstract class Repository<T> {
+        Future<T?> findById(String id);
+        Future<List<T>> findAll();
+        Future<void> save(T entity);
+      }
+    expect:
+      symbols:
+        - name: Repository
+          kind: class
+          is_abstract: true
+          children:
+            - name: findById
+              kind: method
+            - name: findAll
+              kind: method
+            - name: save
+              kind: method
+
+  - name: "mixin"
+    code: |
+      mixin Logging {
+        void log(String message) {
+          print('[LOG] $message');
+        }
+        
+        void logError(String error) {
+          print('[ERROR] $error');
+        }
+      }
+    expect:
+      symbols:
+        - name: Logging
+          kind: mixin
+          children:
+            - name: log
+              kind: method
+            - name: logError
+              kind: method
+
+  - name: "extension"
+    code: |
+      extension StringUtils on String {
+        String capitalize() {
+          if (isEmpty) return this;
+          return '${this[0].toUpperCase()}${substring(1)}';
+        }
+        
+        bool get isBlank => trim().isEmpty;
+      }
+    expect:
+      symbols:
+        - name: StringUtils
+          kind: extension
+          children:
+            - name: capitalize
+              kind: method
+            - name: isBlank
+              kind: property
+
+  - name: "enum"
+    code: |
+      enum Status {
+        pending,
+        active,
+        completed,
+        cancelled;
+        
+        bool get isFinished => this == completed || this == cancelled;
+      }
+    expect:
+      symbols:
+        - name: Status
+          kind: enum
+          children:
+            - name: pending
+              kind: enum_member
+            - name: active
+              kind: enum_member
+            - name: completed
+              kind: enum_member
+            - name: cancelled
+              kind: enum_member
+
+  - name: "factory constructor"
+    code: |
+      class Logger {
+        static final Logger _instance = Logger._internal();
+        
+        factory Logger() => _instance;
+        
+        Logger._internal();
+        
+        void log(String message) => print(message);
+      }
+    expect:
+      symbols:
+        - name: Logger
+          kind: class
+          children:
+            - name: _instance
+              kind: property
+            - name: log
+              kind: method
+
+  - name: "getters and setters"
+    code: |
+      class Rectangle {
+        double _width;
+        double _height;
+        
+        Rectangle(this._width, this._height);
+        
+        double get width => _width;
+        set width(double value) => _width = value;
+        
+        double get area => _width * _height;
+      }
+    expect:
+      symbols:
+        - name: Rectangle
+          kind: class
+          children:
+            - name: _width
+              kind: property
+            - name: _height
+              kind: property
+            - name: width
+              kind: property
+            - name: area
+              kind: property

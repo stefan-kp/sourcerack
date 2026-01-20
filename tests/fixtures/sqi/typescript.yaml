@@ -1,0 +1,115 @@
+# TypeScript Symbol Extraction Tests
+name: "TypeScript Symbol Extraction"
+language: typescript
+description: "Tests symbol extraction for TypeScript"
+
+cases:
+  - name: "simple function"
+    code: |
+      function greet(name: string): string {
+        return `Hello, ${name}!`;
+      }
+    expect:
+      symbols:
+        - name: greet
+          kind: function
+          # Note: TypeScript extractor doesn't capture parameter types currently
+          # return_type: string
+          # parameters:
+          #   - name: name
+          #     type: string
+
+  - name: "async function"
+    code: |
+      async function fetchUser(id: string): Promise<User> {
+        const response = await fetch(`/users/${id}`);
+        return response.json();
+      }
+    expect:
+      symbols:
+        - name: fetchUser
+          kind: function
+          is_async: true
+
+  - name: "exported class"
+    code: |
+      export class UserService {
+        private db: Database;
+        
+        constructor(db: Database) {
+          this.db = db;
+        }
+        
+        async getUser(id: string): Promise<User> {
+          return this.db.find(id);
+        }
+      }
+    expect:
+      symbols:
+        - name: UserService
+          kind: class
+          is_exported: true
+          children:
+            # Note: TypeScript extractor uses 'field' for properties
+            - name: db
+              kind: field
+            # Constructor is reported as 'method'
+            - name: constructor
+              kind: method
+            - name: getUser
+              kind: method
+              is_async: true
+
+  - name: "interface"
+    code: |
+      interface UserConfig {
+        name: string;
+        age?: number;
+        email: string;
+      }
+    expect:
+      symbols:
+        - name: UserConfig
+          kind: interface
+
+  - name: "type alias"
+    code: |
+      type UserId = string | number;
+    expect:
+      symbols:
+        - name: UserId
+          kind: type_alias
+
+  - name: "enum"
+    code: |
+      enum Status {
+        ACTIVE = 'active',
+        INACTIVE = 'inactive',
+        PENDING = 'pending'
+      }
+    expect:
+      symbols:
+        - name: Status
+          kind: enum
+          # Note: TypeScript extractor doesn't extract enum members as children
+          # This is a known limitation
+
+  - name: "arrow function as const"
+    code: |
+      const add = (a: number, b: number): number => a + b;
+    expect:
+      symbols:
+        # Arrow functions assigned to const are extracted as 'function'
+        - name: add
+          kind: function
+
+  - name: "exported function"
+    code: |
+      export function publicApi(): void {
+        console.log('Hello');
+      }
+    expect:
+      symbols:
+        - name: publicApi
+          kind: function
+          is_exported: true

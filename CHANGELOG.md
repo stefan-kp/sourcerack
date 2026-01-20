@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `is_exported` optional field in ChunkPayload for future ranking improvements
 - Error logging for chunk operations (previously silent failures)
 - Tests for glob filtering and ranking functionality
+- YAML-based test framework for SQI extractors (structural symbol extraction tests)
 
 ### Changed
-- **Dart**: Switched to `@sengac/tree-sitter-dart@1.1.6` (actively maintained, compatible with modern tree-sitter)
+- **Dart**: Switched to `@sengac/tree-sitter-dart@1.1.6` (actively maintained, requires tree-sitter 0.25+ - see Known Issues)
 - **Go**: Updated to `tree-sitter-go@0.25.0`
 - **Rust**: Updated to `tree-sitter-rust@0.24.0`
 - **Java**: Updated to `tree-sitter-java@0.23.0`
@@ -33,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Dockerfile grammar support (npm package is a security placeholder)
+
+### Known Issues
+- **Dart grammar requires tree-sitter 0.25+**: The `@sengac/tree-sitter-dart` package has a peer dependency on `@sengac/tree-sitter@^0.25.10`, but SourceRack currently uses `tree-sitter@0.21.1`. A full tree-sitter ecosystem upgrade is planned for a future release.
 
 ## [0.1.0] - 2025-01-18
 

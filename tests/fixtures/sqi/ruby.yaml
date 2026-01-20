@@ -1,0 +1,171 @@
+# Ruby Symbol Extraction Tests
+name: "Ruby Symbol Extraction"
+language: ruby
+description: "Tests symbol extraction for Ruby"
+
+cases:
+  - name: "simple method"
+    code: |
+      def greet(name)
+        "Hello, #{name}!"
+      end
+    expect:
+      symbols:
+        - name: greet
+          kind: method
+          parameters:
+            - name: name
+
+  - name: "class with methods"
+    code: |
+      class UserService
+        def initialize(db)
+          @db = db
+        end
+        
+        def find_user(id)
+          @db.find(id)
+        end
+        
+        private
+        
+        def validate_id(id)
+          id.present?
+        end
+      end
+    expect:
+      symbols:
+        - name: UserService
+          kind: class
+          children:
+            - name: initialize
+              kind: method
+            - name: find_user
+              kind: method
+            - name: validate_id
+              kind: method
+
+  - name: "module"
+    code: |
+      module Authentication
+        def authenticate(user, password)
+          true
+        end
+        
+        def logout
+          nil
+        end
+      end
+    expect:
+      symbols:
+        - name: Authentication
+          kind: module
+          children:
+            - name: authenticate
+              kind: method
+            - name: logout
+              kind: method
+
+  - name: "class method (singleton)"
+    code: |
+      class Config
+        def self.load(path)
+          YAML.load_file(path)
+        end
+        
+        def instance_method
+          "instance"
+        end
+      end
+    expect:
+      symbols:
+        - name: Config
+          kind: class
+          children:
+            # Note: Ruby extractor reports singleton methods as 'method' with name 'load'
+            - name: load
+              kind: method
+            - name: instance_method
+              kind: method
+
+  - name: "attr accessors"
+    code: |
+      class Person
+        attr_reader :name
+        attr_writer :age
+        attr_accessor :email
+        
+        def initialize(name)
+          @name = name
+        end
+      end
+    expect:
+      symbols:
+        - name: Person
+          kind: class
+          children:
+            # Note: Ruby extractor reports attr_* as 'property' kind
+            - name: name
+              kind: property
+            - name: age
+              kind: property
+            - name: email
+              kind: property
+            - name: initialize
+              kind: method
+
+  - name: "class inheritance"
+    code: |
+      class Animal
+        def speak
+          nil
+        end
+      end
+      
+      class Dog < Animal
+        def speak
+          "Woof!"
+        end
+      end
+    expect:
+      symbols:
+        - name: Animal
+          kind: class
+          children:
+            - name: speak
+              kind: method
+        - name: Dog
+          kind: class
+          children:
+            - name: speak
+              kind: method
+
+  - name: "nested modules and classes"
+    code: |
+      module Services
+        class UserService
+          def find(id)
+            nil
+          end
+        end
+      end
+    expect:
+      symbols:
+        - name: Services
+          kind: module
+          children:
+            - name: UserService
+              kind: class
+
+  - name: "method with default parameters"
+    code: |
+      def fetch(url, timeout: 30, retries: 3)
+        nil
+      end
+    expect:
+      symbols:
+        - name: fetch
+          kind: method
+          parameters:
+            # Note: Ruby extractor only captures positional parameters
+            - name: url

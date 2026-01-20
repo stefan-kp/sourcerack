@@ -41,6 +41,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@qdrant/js-client-rest": "^1.12.0",
+    "@sengac/tree-sitter-dart": "^1.1.6",
     "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
     "better-sqlite3": "^11.7.0",
     "commander": "^13.0.0",
