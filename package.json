@@ -45,6 +45,7 @@
     "better-sqlite3": "^11.7.0",
     "commander": "^13.0.0",
     "fastembed": "^1.0.0",
+    "minimatch": "^10.1.1",
     "pino": "^9.6.0",
     "simple-git": "^3.27.0",
     "tree-sitter": "^0.21.1",
@@ -66,6 +67,7 @@
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/better-sqlite3": "^7.6.12",
+    "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^3.0.0",
     "eslint": "^9.18.0",

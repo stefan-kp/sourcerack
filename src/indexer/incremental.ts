@@ -57,6 +57,7 @@ export class IncrementalIndexer {
   private batchSize: number;
   private repoPath: string;
   private sqiIndexer: SQIIndexer;
+  private fileContentCache = new Map<string, { content: string; isBinary: boolean }>();
 
   constructor(
     repoPath: string,
@@ -73,6 +74,21 @@ export class IncrementalIndexer {
     this.embeddings = embeddings;
     this.batchSize = batchSize;
     this.sqiIndexer = createSQIIndexer(metadata.getSQIStorage());
+  }
+
+
+  /**
+   * Get file content with caching during an index run
+   */
+  private async getFileContent(commitSha: string, path: string): Promise<{ content: string; isBinary: boolean }> {
+    const key = `${commitSha}:${path}`;
+    const cached = this.fileContentCache.get(key);
+    if (cached) {
+      return cached;
+    }
+    const result = await this.git.readFileAtCommit(commitSha, path);
+    this.fileContentCache.set(key, result);
+    return result;
   }
 
   /**
@@ -275,8 +291,9 @@ export class IncrementalIndexer {
           for (const chunkId of unchangedChunkIds) {
             try {
               await this.vectors!.addCommitToChunk(chunkId, commitSha);
-            } catch {
+            } catch (error) {
               // Chunk might be deleted, will be recreated if needed
+              console.warn(`Chunk ${chunkId} not found, will be recreated if needed:`, error);
             }
           }
 
@@ -334,8 +351,9 @@ export class IncrementalIndexer {
           for (const chunkId of reusedChunkIds) {
             try {
               await this.vectors!.addCommitToChunk(chunkId, commitSha);
-            } catch {
+            } catch (error) {
               // Chunk might have been deleted
+              console.warn(`Chunk ${chunkId} not found while reusing:`, error);
             }
           }
         }
@@ -356,7 +374,7 @@ export class IncrementalIndexer {
 
       for (const change of filesNeedingParsing) {
         try {
-          const { content, isBinary } = await this.git.readFileAtCommit(
+          const { content, isBinary } = await this.getFileContent(
             commitSha,
             change.path
           );
@@ -404,7 +422,9 @@ export class IncrementalIndexer {
             for (const dc of reusedChunks) {
               try {
                 await this.vectors!.addCommitToChunk(dc.id, commitSha);
-              } catch {
+              } catch (error) {
+                // Chunk might have been deleted, treat as new
+                console.warn(`Chunk ${dc.id} not found, will recreate:`, error);
                 newChunks.push(dc);
               }
             }
@@ -497,7 +517,7 @@ export class IncrementalIndexer {
       const sqiFiles: { path: string; content: string }[] = [];
       for (const change of filesToProcess) {
         try {
-          const { content, isBinary } = await this.git.readFileAtCommit(
+          const { content, isBinary } = await this.getFileContent(
             commitSha,
             change.path
           );
@@ -560,6 +580,7 @@ export class IncrementalIndexer {
       );
     } finally {
       this.releaseLock(repoId, commitSha);
+      this.fileContentCache.clear();
     }
   }
 

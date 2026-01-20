@@ -290,6 +290,12 @@ interface BoostConfig {
   symbolTypeMatch: number;
   /** Boost for definition intent + definition symbol type */
   definitionIntentMatch: number;
+  /** Boost for exported symbols (when available in payload) */
+  exportedSymbol: number;
+  /** Boost for top-level symbol kinds (class, interface) */
+  topLevelSymbolKind: number;
+  /** Boost for symbols in index files */
+  indexFile: number;
 }
 
 const DEFAULT_BOOST_CONFIG: BoostConfig = {
@@ -297,11 +303,36 @@ const DEFAULT_BOOST_CONFIG: BoostConfig = {
   partialSymbolMatch: 0.2,
   symbolTypeMatch: 0.15,
   definitionIntentMatch: 0.1,
+  exportedSymbol: 0.10,
+  topLevelSymbolKind: 0.05,
+  indexFile: 0.05,
 };
 
 /**
  * Calculate boost score for a search result based on parsed query
  */
+/**
+ * Check if the file path is an index file
+ */
+function isIndexFile(path: string): boolean {
+  const filename = path.split('/').pop() ?? '';
+  return /^index\.(ts|tsx|js|jsx|mjs|cjs)$/.test(filename);
+}
+
+/**
+ * Check if the symbol type is a top-level kind (class, interface, type)
+ */
+function isTopLevelSymbolKind(symbolType: string): boolean {
+  const typeLower = symbolType.toLowerCase();
+  return (
+    typeLower.includes('class') ||
+    typeLower.includes('interface') ||
+    typeLower.includes('type') ||
+    typeLower.includes('struct') ||
+    typeLower.includes('enum')
+  );
+}
+
 function calculateBoost(
   result: SearchResult,
   parsedQuery: ParsedQuery,
@@ -343,6 +374,25 @@ function calculateBoost(
     ) {
       boost += config.definitionIntentMatch;
     }
+  }
+
+  // Symbol importance ranking boosts
+  // Boost top-level symbol kinds (class, interface, type, struct, enum)
+  if (isTopLevelSymbolKind(symbolType)) {
+    boost += config.topLevelSymbolKind;
+  }
+
+  // Boost symbols in index files (entry points are more important)
+  if (isIndexFile(result.payload.path)) {
+    boost += config.indexFile;
+  }
+
+  // Boost exported symbols (when is_exported is available in payload)
+  // This requires extending ChunkPayload to include is_exported field
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payloadWithExported = result.payload as any;
+  if (payloadWithExported.is_exported === true) {
+    boost += config.exportedSymbol;
   }
 
   return boost;

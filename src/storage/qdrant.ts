@@ -7,6 +7,7 @@
  */
 
 import { QdrantClient } from '@qdrant/js-client-rest';
+import { minimatch } from 'minimatch';
 import type { EmbeddingVector } from '../embeddings/types.js';
 
 /**
@@ -134,6 +135,8 @@ export interface ChunkPayload {
   end_line: number;
   /** Source code content */
   content: string;
+  /** Whether the symbol is exported (optional, for ranking) */
+  is_exported?: boolean;
 }
 
 /**
@@ -484,33 +487,35 @@ export class QdrantStorage {
         }
       }
 
-      // Path pattern filter (simple prefix matching for now)
-      // Full glob support would require more complex filtering
-      if (filters.pathPattern) {
-        // Remove glob wildcards and use as prefix
-        const pathPrefix = filters.pathPattern.replace(/\*+/g, '');
-        if (pathPrefix) {
-          mustConditions.push({
-            key: 'path',
-            match: { value: pathPrefix },
-          });
-        }
-      }
+      // Path pattern: request more results for post-filtering with glob patterns
+      // because we can't do proper glob matching in Qdrant
+      const hasPathPattern = !!filters.pathPattern;
+      const searchLimit = hasPathPattern ? limit * 3 : limit;
 
       const results = await this.client.search(this.collectionName, {
         vector: queryVector,
         filter: {
           must: mustConditions,
         },
-        limit,
+        limit: searchLimit,
         with_payload: true,
       });
 
-      return results.map((result) => ({
+      let mappedResults = results.map((result) => ({
         id: result.id as string,
         score: result.score,
         payload: result.payload as unknown as ChunkPayload,
       }));
+
+      // Apply glob pattern filtering using minimatch
+      if (filters.pathPattern) {
+        mappedResults = mappedResults.filter((r) =>
+          minimatch(r.payload.path, filters.pathPattern!, { matchBase: true })
+        );
+      }
+
+      // Limit results after filtering
+      return mappedResults.slice(0, limit);
     } catch (error) {
       throw new QdrantStorageError(
         `Search failed: ${error instanceof Error ? error.message : String(error)}`,

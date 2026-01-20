@@ -57,6 +57,7 @@ export class Indexer {
   private embeddings: EmbeddingProvider | null;
   private batchSize: number;
   private sqiIndexer: SQIIndexer;
+  private fileContentCache = new Map<string, { content: string; isBinary: boolean }>();
 
   constructor(
     git: GitAdapter,
@@ -71,6 +72,21 @@ export class Indexer {
     this.embeddings = embeddings;
     this.batchSize = batchSize;
     this.sqiIndexer = createSQIIndexer(metadata.getSQIStorage());
+  }
+
+
+  /**
+   * Get file content with caching during an index run
+   */
+  private async getFileContent(commitSha: string, path: string): Promise<{ content: string; isBinary: boolean }> {
+    const key = `${commitSha}:${path}`;
+    const cached = this.fileContentCache.get(key);
+    if (cached) {
+      return cached;
+    }
+    const result = await this.git.readFileAtCommit(commitSha, path);
+    this.fileContentCache.set(key, result);
+    return result;
   }
 
   /**
@@ -306,8 +322,9 @@ export class Indexer {
           for (const chunkId of reusedChunkIds) {
             try {
               await this.vectors!.addCommitToChunk(chunkId, commitSha);
-            } catch {
+            } catch (error) {
               // Chunk might have been deleted between check and update - rare race condition
+              console.warn(`Chunk ${chunkId} not found during reuse:`, error);
             }
           }
         }
@@ -339,7 +356,7 @@ export class Indexer {
       for (const file of filesToParse) {
         try {
           // Read file content
-          const { content, isBinary } = await this.git.readFileAtCommit(
+          const { content, isBinary } = await this.getFileContent(
             commitSha,
             file.path
           );
@@ -388,8 +405,9 @@ export class Indexer {
             for (const dc of reusedChunks) {
               try {
                 await this.vectors!.addCommitToChunk(dc.id, commitSha);
-              } catch {
+              } catch (error) {
                 // Chunk might have been deleted, treat as new
+                console.warn(`Chunk ${dc.id} not found, will recreate:`, error);
                 newChunks.push(dc);
               }
             }
@@ -470,7 +488,7 @@ export class Indexer {
       // Also collect SQI content for files with indexed blobs (need content for SQI)
       for (const file of filesWithIndexedBlobs) {
         try {
-          const { content, isBinary } = await this.git.readFileAtCommit(
+          const { content, isBinary } = await this.getFileContent(
             commitSha,
             file.path
           );
@@ -534,6 +552,7 @@ export class Indexer {
     } finally {
       // Always release lock
       this.releaseLock(repoId, commitSha);
+      this.fileContentCache.clear();
     }
   }
 
