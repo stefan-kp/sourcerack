@@ -25,6 +25,7 @@ interface IndexOptions {
   quiet?: boolean;
   reset?: boolean;
   force?: boolean;
+  sqi?: boolean;
 }
 
 /**
@@ -151,6 +152,7 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
         commitSha: repoContext.commitSha,
         onProgress: progress.createCallback(),
         force: options.force === true,
+        skipEmbeddings: options.sqi === true,
       };
       if (options.branch !== undefined) {
         indexingOptions.branch = options.branch;
@@ -191,6 +193,7 @@ export function registerIndexCommand(program: Command): void {
     .option('-b, --branch <name>', 'Branch label for reference')
     .option('--reset', 'Delete all indexed data for this repository')
     .option('--force', 'Force re-indexing even if commit was already indexed')
+    .option('--sqi', 'SQI-only mode: skip embeddings (no Qdrant needed)')
     .option('--json', 'Output in JSON format')
     .option('-q, --quiet', 'Suppress progress output')
     .action(async (path: string | undefined, options: IndexOptions) => {
