@@ -44,49 +44,49 @@ python:
 go:
   extensions: [".go"]
   package: "tree-sitter-go"
-  version: "^0.21.0"
+  version: "^0.25.0"
   tier: optional
   sourcePaths: ["cmd/", "pkg/", "internal/", "api/", "test/"]
 
 rust:
   extensions: [".rs"]
   package: "tree-sitter-rust"
-  version: "^0.21.0"
+  version: "^0.24.0"
   tier: optional
   sourcePaths: ["src/", "tests/", "benches/", "examples/"]
 
 java:
   extensions: [".java"]
   package: "tree-sitter-java"
-  version: "^0.21.0"
+  version: "^0.23.0"
   tier: optional
   sourcePaths: ["src/main/java/", "src/test/java/", "src/"]
 
 c:
   extensions: [".c", ".h"]
   package: "tree-sitter-c"
-  version: "^0.21.0"
+  version: "^0.24.0"
   tier: optional
   sourcePaths: ["src/", "include/", "lib/", "test/", "tests/"]
 
 cpp:
   extensions: [".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h++"]
   package: "tree-sitter-cpp"
-  version: "^0.21.0"
+  version: "^0.23.0"
   tier: optional
   sourcePaths: ["src/", "include/", "lib/", "test/", "tests/"]
 
 c_sharp:
   extensions: [".cs"]
   package: "tree-sitter-c-sharp"
-  version: "^0.21.0"
+  version: "^0.23.0"
   tier: optional
   sourcePaths: ["src/", "lib/", "test/", "tests/"]
 
 ruby:
   extensions: [".rb", ".rake", ".gemspec"]
   package: "tree-sitter-ruby"
-  version: "^0.21.0"
+  version: "^0.23.0"
   tier: optional
   sourcePaths: ["app/", "lib/", "src/", "spec/", "test/"]
 
@@ -94,38 +94,37 @@ php:
   extensions: [".php", ".phtml"]
   package: "tree-sitter-php"
   submodule: "php"
-  version: "^0.21.0"
+  version: "^0.24.0"
   tier: optional
   sourcePaths: ["src/", "app/", "lib/", "tests/", "public/"]
 
 kotlin:
   extensions: [".kt", ".kts"]
   package: "tree-sitter-kotlin"
-  version: "^0.3.0"
+  version: "^0.3.8"
   tier: optional
   sourcePaths: ["src/main/kotlin/", "src/test/kotlin/", "src/"]
 
 swift:
   extensions: [".swift"]
   package: "tree-sitter-swift"
-  version: "^0.21.0"
+  version: "^0.7.0"
   tier: optional
   sourcePaths: ["Sources/", "Tests/", "src/"]
 
 scala:
   extensions: [".scala", ".sc"]
   package: "tree-sitter-scala"
-  version: "^0.21.0"
+  version: "^0.24.0"
   tier: optional
   sourcePaths: ["src/main/scala/", "src/test/scala/", "src/"]
 
-# Note: tree-sitter-dart@1.0.0 is incompatible with tree-sitter@0.21+
-# Symbol extraction is prepared but disabled until a compatible grammar exists.
-# Embeddings still work for semantic search.
+# Using @sengac/tree-sitter-dart which is actively maintained and compatible
+# with modern tree-sitter versions (based on tree-sitter-dart-orchard)
 dart:
   extensions: [".dart"]
-  package: "tree-sitter-dart"
-  version: "^1.0.0"
+  package: "@sengac/tree-sitter-dart"
+  version: "^1.1.6"
   tier: optional
   sourcePaths: ["lib/", "test/", "bin/"]
 
@@ -134,13 +133,13 @@ dart:
 json:
   extensions: [".json", ".jsonc"]
   package: "tree-sitter-json"
-  version: "^0.21.0"
+  version: "^0.24.0"
   tier: optional
 
 yaml:
   extensions: [".yaml", ".yml"]
   package: "@tree-sitter-grammars/tree-sitter-yaml"
-  version: "^0.7.0"
+  version: "^0.7.1"
   tier: optional
 
 toml:
@@ -158,13 +157,13 @@ html:
 css:
   extensions: [".css"]
   package: "tree-sitter-css"
-  version: "^0.21.0"
+  version: "^0.25.0"
   tier: optional
 
 scss:
   extensions: [".scss"]
   package: "tree-sitter-scss"
-  version: "^0.21.0"
+  version: "^1.0.0"
   tier: optional
 
 # === Shell/Script Languages ===
@@ -172,33 +171,35 @@ scss:
 bash:
   extensions: [".sh", ".bash", ".zsh"]
   package: "tree-sitter-bash"
-  version: "^0.21.0"
+  version: "^0.25.0"
   tier: optional
 
 lua:
   extensions: [".lua"]
   package: "tree-sitter-lua"
-  version: "^0.21.0"
+  version: "^2.1.0"
   tier: optional
 
 # === Infrastructure Languages ===
 
 hcl:
   extensions: [".hcl", ".tf", ".tfvars"]
-  package: "tree-sitter-hcl"
-  version: "^0.21.0"
+  package: "@tree-sitter-grammars/tree-sitter-hcl"
+  version: "^1.2.0"
   tier: optional
 
-dockerfile:
-  extensions: ["Dockerfile", ".dockerfile"]
-  package: "tree-sitter-dockerfile"
-  version: "^0.21.0"
-  tier: optional
+# Note: tree-sitter-dockerfile is a security placeholder on npm
+# Dockerfile support disabled until a proper grammar is available
+# dockerfile:
+#   extensions: ["Dockerfile", ".dockerfile"]
+#   package: "tree-sitter-dockerfile"
+#   version: "^0.21.0"
+#   tier: optional
 
 sql:
   extensions: [".sql"]
   package: "tree-sitter-sql"
-  version: "^0.21.0"
+  version: "^0.1.0"
   tier: optional
 
 # === Documentation Languages ===
