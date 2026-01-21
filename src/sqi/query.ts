@@ -29,6 +29,15 @@ import {
   UsageRecord,
   FuzzyMatch,
   FuzzyUsageMatch,
+  CodebaseSummaryInput,
+  CodebaseSummaryOutput,
+  LanguageStats,
+  ModuleStats,
+  HotspotInfo,
+  EntryPointInfo,
+  DependencyInfo,
+  GetSymbolContextInput,
+  GetSymbolContextOutput,
 } from './types.js';
 
 /**
@@ -492,6 +501,111 @@ export class StructuredQueryEngine {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  // ==================== Codebase Summary ====================
+
+  async codebaseSummary(input: CodebaseSummaryInput): Promise<CodebaseSummaryOutput> {
+    try {
+      const { commitId, error } = await this.resolveCommit(input.repo_path, input.commit);
+      if (error || !commitId) {
+        return { success: false, error: error ?? 'Failed to resolve commit' };
+      }
+
+      const stats = this.sqi.getCommitStats(commitId);
+      const fileCounts = this.sqi.getFileCountsByExtension(commitId);
+      const symbolCounts = this.sqi.getSymbolCountsByExtension(commitId);
+      const totalFiles = fileCounts.reduce((sum, l) => sum + l.count, 0);
+
+      const languageMap = new Map<string, LanguageStats>();
+      for (const fc of fileCounts) {
+        languageMap.set(fc.extension, { language: fc.extension, file_count: fc.count, symbol_count: 0, percentage: totalFiles > 0 ? Math.round((fc.count / totalFiles) * 100) : 0 });
+      }
+      for (const sc of symbolCounts) {
+        const existing = languageMap.get(sc.extension);
+        if (existing) existing.symbol_count = sc.count;
+      }
+      const languages = Array.from(languageMap.values()).sort((a, b) => b.file_count - a.file_count);
+
+      const moduleRaw = this.sqi.getModuleStats(commitId, input.max_modules ?? 10);
+      const modules: ModuleStats[] = moduleRaw.map(m => ({ path: m.path, file_count: m.file_count, symbol_count: m.symbol_count, main_symbols: this.sqi.getModuleMainSymbols(commitId, m.path) }));
+
+      const entryRaw = this.sqi.getEntryPointFiles(commitId);
+      const entry_points: EntryPointInfo[] = entryRaw.map(e => ({ file_path: e.file_path, type: e.type as EntryPointInfo['type'], exports: this.sqi.getExportedSymbols(commitId, e.file_path) }));
+
+      let hotspots: HotspotInfo[] = [];
+      if (input.include_hotspots !== false) {
+        const hotspotRaw = this.sqi.getHotspots(commitId, input.max_hotspots ?? 10);
+        hotspots = hotspotRaw.map(h => ({ name: h.name, qualified_name: h.qualified_name, kind: h.symbol_kind as SymbolKind, file_path: h.file_path, usage_count: h.usage_count }));
+      }
+
+      let dependencies: DependencyInfo[] = [];
+      if (input.include_dependencies !== false) {
+        const depRaw = this.sqi.getExternalDependencies(commitId);
+        dependencies = depRaw.map(d => ({ name: d.name, import_count: d.import_count, importers: this.sqi.getDependencyImporters(commitId, d.name) }));
+      }
+
+      const kindCounts = this.sqi.getSymbolCountsByKind(commitId);
+      const symbol_breakdown = kindCounts.map(k => ({ kind: k.kind as SymbolKind, count: k.count }));
+
+      return { success: true, summary: { total_files: stats.files, total_symbols: stats.symbols, total_usages: stats.usages, total_imports: stats.imports, languages, modules, entry_points, hotspots, dependencies, symbol_breakdown } };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  // ==================== Symbol Context ====================
+
+  async getSymbolContext(input: GetSymbolContextInput): Promise<GetSymbolContextOutput> {
+    try {
+      const { commitId, error, git } = await this.resolveCommit(input.repo_path, input.commit);
+      if (error || !commitId || !git) {
+        return { success: false, error: error ?? 'Failed to resolve commit' };
+      }
+
+      const symbols = this.sqi.findSymbolsByName(commitId, input.symbol_name);
+      if (symbols.length === 0) {
+        return { success: false, error: `Symbol not found: ${input.symbol_name}` };
+      }
+
+      const symbol = symbols[0]!;
+      const symbolInfo = this.symbolRecordToInfo(symbol);
+
+      let source_code: string | undefined;
+      if (input.include_source !== false) {
+        try {
+          const { content } = await git.readFileAtCommit(input.commit, symbol.file_path);
+          const lines = content.split('\n');
+          source_code = lines.slice(symbol.start_line - 1, symbol.end_line).join('\n');
+        } catch { /* Source not available */ }
+      }
+
+      const usages: UsageInfo[] = [];
+      if (input.include_usages !== false) {
+        const usageRecords = this.sqi.findUsagesByName(commitId, input.symbol_name);
+        for (const record of usageRecords.slice(0, input.max_usages ?? 20)) {
+          let contextSnippet = '';
+          try {
+            const { content } = await git.readFileAtCommit(input.commit, record.file_path);
+            contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
+          } catch { /* Context not available */ }
+          usages.push({ file_path: record.file_path, line: record.line, column: record.column, usage_type: record.usage_type, context_snippet: contextSnippet });
+        }
+      }
+
+      const fileImports = this.sqi.getImportsForFile(commitId, symbol.file_path);
+      const imports_used = fileImports.map(i => i.module_specifier);
+      const importers = this.sqi.findImportersByPattern(commitId, `%${symbol.file_path.replace(/\.[^.]+$/, '')}%`);
+      const imported_by = [...new Set(importers.map(i => i.file_path))].slice(0, 10);
+      const sameFile = this.sqi.getSymbolsInFile(commitId, symbol.file_path);
+      const related_symbols = sameFile.filter(s => s.id !== symbol.id).slice(0, 10).map(s => this.symbolRecordToInfo(s));
+
+      const context: GetSymbolContextOutput['context'] = { symbol: symbolInfo, usages, imports_used, imported_by, related_symbols };
+      if (source_code !== undefined) context.source_code = source_code;
+      return { success: true, context };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 

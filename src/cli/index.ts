@@ -17,6 +17,9 @@ import { registerFindUsagesCommand } from './commands/find-usages.js';
 import { registerHierarchyCommand } from './commands/hierarchy.js';
 import { registerImportsCommand, registerImportersCommand } from './commands/imports.js';
 import { registerSetupCommand } from './commands/setup.js';
+// Agent-focused commands
+import { registerSummaryCommand } from './commands/summary.js';
+import { registerContextCommand } from './commands/context.js';
 
 /**
  * Create and configure the CLI program
@@ -45,6 +48,10 @@ function createProgram(): Command {
 
   // Setup command
   registerSetupCommand(program);
+
+  // Agent-focused commands
+  registerSummaryCommand(program);
+  registerContextCommand(program);
 
   return program;
 }

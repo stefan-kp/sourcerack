@@ -496,3 +496,114 @@ export class SQIError extends Error {
     this.name = 'SQIError';
   }
 }
+
+// ==================== Codebase Summary Types ====================
+
+/**
+ * Language statistics for codebase summary
+ */
+export interface LanguageStats {
+  language: string;
+  file_count: number;
+  symbol_count: number;
+  percentage: number;
+}
+
+/**
+ * Module/directory statistics
+ */
+export interface ModuleStats {
+  path: string;
+  file_count: number;
+  symbol_count: number;
+  main_symbols: string[];
+}
+
+/**
+ * Hotspot - symbol with most usages
+ */
+export interface HotspotInfo {
+  name: string;
+  qualified_name: string;
+  kind: SymbolKind;
+  file_path: string;
+  usage_count: number;
+}
+
+/**
+ * Entry point detection
+ */
+export interface EntryPointInfo {
+  file_path: string;
+  type: 'main' | 'index' | 'entry' | 'cli' | 'server' | 'app';
+  exports: string[];
+}
+
+/**
+ * External dependency info
+ */
+export interface DependencyInfo {
+  name: string;
+  import_count: number;
+  importers: string[];
+}
+
+/**
+ * Input for codebase_summary query
+ */
+export interface CodebaseSummaryInput {
+  repo_path: string;
+  commit: string;
+  include_hotspots?: boolean;
+  include_dependencies?: boolean;
+  max_modules?: number;
+  max_hotspots?: number;
+}
+
+/**
+ * Output for codebase_summary query
+ */
+export interface CodebaseSummaryOutput {
+  success: boolean;
+  summary?: {
+    total_files: number;
+    total_symbols: number;
+    total_usages: number;
+    total_imports: number;
+    languages: LanguageStats[];
+    modules: ModuleStats[];
+    entry_points: EntryPointInfo[];
+    hotspots: HotspotInfo[];
+    dependencies: DependencyInfo[];
+    symbol_breakdown: { kind: SymbolKind; count: number }[];
+  };
+  error?: string;
+}
+
+/**
+ * Input for get_symbol_context query
+ */
+export interface GetSymbolContextInput {
+  repo_path: string;
+  commit: string;
+  symbol_name: string;
+  include_usages?: boolean;
+  include_source?: boolean;
+  max_usages?: number;
+}
+
+/**
+ * Output for get_symbol_context query
+ */
+export interface GetSymbolContextOutput {
+  success: boolean;
+  context?: {
+    symbol: SymbolInfo;
+    source_code?: string;
+    usages: UsageInfo[];
+    imports_used: string[];
+    imported_by: string[];
+    related_symbols: SymbolInfo[];
+  };
+  error?: string;
+}
