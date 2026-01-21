@@ -140,6 +140,15 @@ CREATE INDEX IF NOT EXISTS idx_imports_commit ON imports(commit_id);
 
 CREATE INDEX IF NOT EXISTS idx_bindings_import ON import_bindings(import_id);
 CREATE INDEX IF NOT EXISTS idx_bindings_name ON import_bindings(imported_name);
+
+-- Trigrams for fuzzy symbol search
+CREATE TABLE IF NOT EXISTS symbol_trigrams (
+  symbol_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+  trigram TEXT NOT NULL,
+  PRIMARY KEY (symbol_id, trigram)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigrams_trigram ON symbol_trigrams(trigram);
 `;
 
 /**
@@ -202,6 +211,9 @@ export class SQIStorage {
     );
 
     const symbolId = result.lastInsertRowid as number;
+
+    // Insert trigrams for fuzzy search
+    this.insertTrigrams(symbolId, symbol.name);
 
     // Insert parameters if present
     if (symbol.parameters && symbol.parameters.length > 0) {
@@ -467,6 +479,101 @@ export class SQIStorage {
       .all(definitionSymbolId) as RawUsageRow[];
 
     return rows.map((row) => this.mapUsageRow(row));
+  }
+
+  /**
+   * Find usages with fuzzy symbol name matching
+   * Returns exact matches and similar symbol names with their usages
+   */
+  findUsagesWithFuzzy(
+    commitId: number,
+    symbolName: string,
+    options: {
+      filePath?: string;
+      minSimilarity?: number;
+      fuzzyLimit?: number;
+    } = {}
+  ): {
+    exact: UsageRecord[];
+    fuzzy: Array<{ symbolName: string; similarity: number; usages: UsageRecord[] }>;
+  } {
+    const { filePath, minSimilarity = 0.3, fuzzyLimit = 5 } = options;
+
+    // First, find exact matches
+    const exact = this.findUsagesByName(commitId, symbolName, filePath);
+
+    // Get trigrams for the search term
+    const searchTrigrams = SQIStorage.generateTrigrams(symbolName);
+    if (searchTrigrams.length === 0) {
+      return { exact, fuzzy: [] };
+    }
+
+    // Find similar symbol names from usages table using trigrams
+    // We need to find distinct symbol_names that have similar trigrams
+    const trigramPlaceholders = searchTrigrams.map(() => '?').join(',');
+
+    // This query finds symbol names used in usages that share trigrams with our search
+    // We join through symbols that have those trigrams
+    const query = `
+      WITH matched_symbols AS (
+        SELECT DISTINCT s.name, s.id
+        FROM symbols s
+        INNER JOIN symbol_trigrams st ON st.symbol_id = s.id
+        WHERE s.commit_id = ? AND st.trigram IN (${trigramPlaceholders})
+        AND s.name != ?
+      ),
+      symbol_trigram_counts AS (
+        SELECT ms.name, ms.id, COUNT(DISTINCT st.trigram) as shared_count
+        FROM matched_symbols ms
+        INNER JOIN symbol_trigrams st ON st.symbol_id = ms.id
+        WHERE st.trigram IN (${trigramPlaceholders})
+        GROUP BY ms.name, ms.id
+      ),
+      total_trigrams AS (
+        SELECT stc.name, stc.id, stc.shared_count,
+               (SELECT COUNT(DISTINCT trigram) FROM symbol_trigrams WHERE symbol_id = stc.id) as total_count
+        FROM symbol_trigram_counts stc
+      )
+      SELECT name,
+             CAST(shared_count AS REAL) / (total_count + ? - shared_count) as similarity
+      FROM total_trigrams
+      WHERE CAST(shared_count AS REAL) / (total_count + ? - shared_count) >= ?
+      ORDER BY similarity DESC
+      LIMIT ?
+    `;
+
+    const params = [
+      commitId,
+      ...searchTrigrams,
+      symbolName,
+      ...searchTrigrams,
+      searchTrigrams.length,
+      searchTrigrams.length,
+      minSimilarity,
+      fuzzyLimit * 2, // Get more to account for filtering
+    ];
+
+    const similarNames = this.db.prepare(query).all(...params) as Array<{
+      name: string;
+      similarity: number;
+    }>;
+
+    // For each similar symbol name, find its usages
+    const fuzzy: Array<{ symbolName: string; similarity: number; usages: UsageRecord[] }> = [];
+
+    for (const match of similarNames) {
+      const usages = this.findUsagesByName(commitId, match.name, filePath);
+      if (usages.length > 0) {
+        fuzzy.push({
+          symbolName: match.name,
+          similarity: match.similarity,
+          usages,
+        });
+      }
+      if (fuzzy.length >= fuzzyLimit) break;
+    }
+
+    return { exact, fuzzy };
   }
 
   /**
@@ -748,6 +855,28 @@ export class SQIStorage {
         }
       }
 
+      // Step 2.5: Copy symbol_trigrams with mapped symbol_id
+      const trigramsToCopy = this.db.prepare(`
+        SELECT st.symbol_id, st.trigram
+        FROM symbol_trigrams st
+        JOIN symbols s ON st.symbol_id = s.id
+        WHERE s.commit_id = ? ${excludeClause.replace(/file_path/g, 's.file_path')}
+      `).all(sourceCommitId, ...excludedFiles) as {
+        symbol_id: number;
+        trigram: string;
+      }[];
+
+      const insertTrigram = this.db.prepare(`
+        INSERT OR IGNORE INTO symbol_trigrams (symbol_id, trigram) VALUES (?, ?)
+      `);
+
+      for (const tg of trigramsToCopy) {
+        const newSymbolId = symbolIdMap.get(tg.symbol_id);
+        if (newSymbolId !== undefined) {
+          insertTrigram.run(newSymbolId, tg.trigram);
+        }
+      }
+
       // Step 3: Copy symbol_parameters with mapped symbol_id
       const paramsToCopy = this.db.prepare(`
         SELECT sp.symbol_id, sp.position, sp.name, sp.type_annotation, sp.is_optional
@@ -953,6 +1082,165 @@ export class SQIStorage {
     const endLine = Math.min(lines.length, line + contextLines);
 
     return lines.slice(startLine, endLine).join('\n');
+  }
+
+  // ==================== Trigram / Fuzzy Search ====================
+
+  /**
+   * Generate trigrams from a string
+   * Pads the string with spaces for edge trigrams
+   */
+  static generateTrigrams(text: string): string[] {
+    // Normalize: lowercase, replace non-alphanumeric with spaces
+    const normalized = text.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+    // Pad with spaces for edge matching
+    const padded = `  ${normalized}  `;
+    
+    const trigrams = new Set<string>();
+    for (let i = 0; i <= padded.length - 3; i++) {
+      const trigram = padded.slice(i, i + 3);
+      // Skip pure whitespace trigrams
+      if (trigram.trim().length > 0) {
+        trigrams.add(trigram);
+      }
+    }
+    return Array.from(trigrams);
+  }
+
+  /**
+   * Insert trigrams for a symbol
+   */
+  insertTrigrams(symbolId: number, symbolName: string): void {
+    const trigrams = SQIStorage.generateTrigrams(symbolName);
+    
+    const stmt = this.db.prepare(
+      'INSERT OR IGNORE INTO symbol_trigrams (symbol_id, trigram) VALUES (?, ?)'
+    );
+    
+    for (const trigram of trigrams) {
+      stmt.run(symbolId, trigram);
+    }
+  }
+
+  /**
+   * Find symbols by fuzzy matching using trigram similarity
+   * Returns symbols sorted by similarity score (Jaccard index)
+   */
+  findSymbolsFuzzy(
+    commitId: number,
+    searchTerm: string,
+    options: {
+      minSimilarity?: number;
+      limit?: number;
+      kind?: SymbolKind;
+    } = {}
+  ): Array<{ symbol: SymbolRecord; similarity: number; isExact: boolean }> {
+    const { minSimilarity = 0.3, limit = 20, kind } = options;
+    
+    // Generate trigrams for search term
+    const searchTrigrams = SQIStorage.generateTrigrams(searchTerm);
+    if (searchTrigrams.length === 0) {
+      return [];
+    }
+
+    // Build query to find matching symbols with trigram count
+    const placeholders = searchTrigrams.map(() => '?').join(',');
+    
+    let query = `
+      SELECT 
+        s.*,
+        COUNT(DISTINCT st.trigram) as matching_count,
+        (SELECT COUNT(DISTINCT trigram) FROM symbol_trigrams WHERE symbol_id = s.id) as total_count
+      FROM symbols s
+      JOIN symbol_trigrams st ON s.id = st.symbol_id
+      WHERE s.commit_id = ?
+        AND st.trigram IN (${placeholders})
+    `;
+    
+    const params: (number | string)[] = [commitId, ...searchTrigrams];
+    
+    if (kind) {
+      query += ' AND s.symbol_kind = ?';
+      params.push(kind);
+    }
+    
+    query += `
+      GROUP BY s.id
+      HAVING matching_count > 0
+      ORDER BY 
+        (s.name = ?) DESC,
+        (LOWER(s.name) = LOWER(?)) DESC,
+        (matching_count * 1.0 / (total_count + ? - matching_count)) DESC
+      LIMIT ?
+    `;
+    
+    // Jaccard similarity: intersection / union
+    // union = total_count + searchTrigrams.length - matching_count
+    params.push(searchTerm, searchTerm, searchTrigrams.length, limit);
+    
+    const rows = this.db.prepare(query).all(...params) as (RawSymbolRow & {
+      matching_count: number;
+      total_count: number;
+    })[];
+    
+    const searchTrigramCount = searchTrigrams.length;
+    
+    return rows
+      .map((row) => {
+        // Jaccard similarity: |A ∩ B| / |A ∪ B|
+        const intersection = row.matching_count;
+        const union = row.total_count + searchTrigramCount - intersection;
+        const similarity = union > 0 ? intersection / union : 0;
+        
+        const isExact = row.name === searchTerm || row.name.toLowerCase() === searchTerm.toLowerCase();
+        
+        return {
+          symbol: this.mapSymbolRow(row),
+          similarity,
+          isExact,
+        };
+      })
+      .filter((result) => result.similarity >= minSimilarity || result.isExact);
+  }
+
+  /**
+   * Find symbols with both exact and fuzzy matching
+   * Returns exact matches first, then fuzzy matches
+   */
+  findSymbolsWithFuzzy(
+    commitId: number,
+    name: string,
+    options: {
+      kind?: SymbolKind;
+      minSimilarity?: number;
+      fuzzyLimit?: number;
+    } = {}
+  ): {
+    exact: SymbolRecord[];
+    fuzzy: Array<{ symbol: SymbolRecord; similarity: number }>;
+  } {
+    const { kind, minSimilarity = 0.3, fuzzyLimit = 10 } = options;
+    
+    // First, find exact matches
+    const exact = this.findSymbolsByName(commitId, name, kind);
+    const exactIds = new Set(exact.map((s) => s.id));
+    
+    // Then find fuzzy matches (excluding exact)
+    const fuzzyOptions: { minSimilarity: number; limit: number; kind?: SymbolKind } = {
+      minSimilarity,
+      limit: fuzzyLimit + exact.length, // Get extra to account for exact matches
+    };
+    if (kind) {
+      fuzzyOptions.kind = kind;
+    }
+    const fuzzyResults = this.findSymbolsFuzzy(commitId, name, fuzzyOptions);
+    
+    const fuzzy = fuzzyResults
+      .filter((r) => !exactIds.has(r.symbol.id) && !r.isExact)
+      .slice(0, fuzzyLimit)
+      .map((r) => ({ symbol: r.symbol, similarity: r.similarity }));
+    
+    return { exact, fuzzy };
   }
 
   // ==================== Private Helpers ====================

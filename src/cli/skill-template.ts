@@ -8,7 +8,7 @@
 /**
  * Current skill version - update this when the skill content changes
  */
-export const SKILL_VERSION = '0.3.0';
+export const SKILL_VERSION = '0.4.0';
 
 /**
  * Generate the main SKILL.md content
@@ -85,8 +85,20 @@ sourcerack index [path]
 \`\`\`
 Index the current directory or specified path. **Run this first before searching.**
 
-Options:
+**Options:**
+- \`-c, --commit <ref>\`: Commit, branch, or tag to index (default: HEAD)
+- \`-b, --branch <name>\`: Branch label for reference
 - \`--reset\`: Delete existing index and re-index from scratch
+- \`--force\`: Force re-indexing even if commit was already indexed
+- \`--sqi\`: SQI-only mode: skip embeddings (no Docker/Qdrant needed)
+- \`--json\`: Output in JSON format
+- \`-q, --quiet\`: Suppress progress output
+
+**Examples:**
+- \`sourcerack index\` - Index current directory at HEAD
+- \`sourcerack index --reset\` - Delete existing index and start fresh
+- \`sourcerack index --sqi\` - Index without embeddings (for find-def/find-usages only)
+- \`sourcerack index --commit feature-branch\` - Index a specific branch
 
 ### Search code semantically
 \`\`\`bash
@@ -94,41 +106,58 @@ sourcerack query "<search query>" [--limit N]
 \`\`\`
 Search for code using natural language. Returns relevant code chunks with file paths and line numbers.
 
+**Options:**
+- \`-l, --limit <n>\`: Maximum results (default: 10)
+- \`-p, --path <pattern>\`: Filter by path pattern (glob)
+- \`-t, --type <kind>\`: Filter by symbol type
+- \`-e, --extension <ext>\`: Filter by file extension
+- \`--json\`: Output in JSON format
+
 **Examples:**
 - \`sourcerack query "authentication middleware"\`
 - \`sourcerack query "database connection handling" --limit 20\`
-- \`sourcerack query "error handling in API routes"\`
+- \`sourcerack query "error handling in API routes" --path "src/api/**"\`
 
 ### Find symbol definitions
 \`\`\`bash
-sourcerack find-def <symbol> [--type <kind>] [--no-dirty]
+sourcerack find-def <symbol> [options]
 \`\`\`
 Find where a symbol (class, function, method) is defined.
 
 By default includes uncommitted changes (modified, staged, and untracked files).
 
 **Options:**
+- \`-p, --path <path>\`: Repository path (default: current directory)
+- \`-c, --commit <ref>\`: Commit to search (default: HEAD)
 - \`--type <kind>\`: Filter by symbol type (function, class, method, interface)
 - \`--no-dirty\`: Exclude uncommitted changes from results
+- \`--fuzzy\`: Include fuzzy matches (similar symbol names with similarity %)
+- \`--json\`: Output in JSON format
 
 **Examples:**
 - \`sourcerack find-def UserService\`
 - \`sourcerack find-def handleRequest --type function\`
+- \`sourcerack find-def UserServce --fuzzy\` - Finds "UserService" even with typo
 - \`sourcerack find-def calculate_total --type method\`
 
 ### Find symbol usages
 \`\`\`bash
-sourcerack find-usages <symbol> [--file <path>] [--no-dirty]
+sourcerack find-usages <symbol> [options]
 \`\`\`
 Find all places where a symbol is used/referenced.
 
 **Options:**
-- \`--file <path>\`: Limit search to a specific file
+- \`-p, --path <path>\`: Repository path (default: current directory)
+- \`-c, --commit <ref>\`: Commit to search (default: HEAD)
+- \`-f, --file <path>\`: Limit search to a specific file
 - \`--no-dirty\`: Exclude uncommitted changes from results
+- \`--fuzzy\`: Include fuzzy matches (similar symbol names with similarity %)
+- \`--json\`: Output in JSON format
 
 **Examples:**
 - \`sourcerack find-usages authenticate\`
 - \`sourcerack find-usages DatabaseConnection --file src/db/connection.ts\`
+- \`sourcerack find-usages authenicate --fuzzy\` - Finds "authenticate" usages despite typo
 
 ### Check indexing status
 \`\`\`bash
@@ -136,11 +165,18 @@ sourcerack status [path]
 \`\`\`
 Shows if a repository is indexed and statistics about symbols, files, and languages.
 
+**Options:**
+- \`--json\`: Output in JSON format
+- \`-q, --quiet\`: Suppress detailed output
+
 ### List indexed repositories
 \`\`\`bash
 sourcerack repos
 \`\`\`
 Shows all indexed repositories with their paths and commit info.
+
+**Options:**
+- \`--json\`: Output in JSON format
 
 ## Workflow
 

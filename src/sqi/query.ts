@@ -26,6 +26,9 @@ import {
   FindImportersInput,
   FindImportersOutput,
   SymbolRecord,
+  UsageRecord,
+  FuzzyMatch,
+  FuzzyUsageMatch,
 } from './types.js';
 
 /**
@@ -58,7 +61,31 @@ export class StructuredQueryEngine {
         return { success: false, definitions: [], error };
       }
 
-      // Find symbols by name
+      // Use fuzzy search if requested
+      if (input.fuzzy) {
+        const fuzzyOptions: Parameters<typeof this.sqi.findSymbolsWithFuzzy>[2] = {
+          minSimilarity: input.min_similarity ?? 0.3,
+          fuzzyLimit: 10,
+        };
+        if (input.symbol_kind) {
+          fuzzyOptions.kind = input.symbol_kind;
+        }
+        const result = this.sqi.findSymbolsWithFuzzy(commitId, input.symbol_name, fuzzyOptions);
+
+        const definitions = result.exact.map((s) => this.symbolRecordToInfo(s));
+        const fuzzy_matches: FuzzyMatch[] = result.fuzzy.map((f) => ({
+          symbol: this.symbolRecordToInfo(f.symbol),
+          similarity: f.similarity,
+        }));
+
+        return {
+          success: true,
+          definitions,
+          fuzzy_matches,
+        };
+      }
+
+      // Find symbols by exact name
       const symbols = this.sqi.findSymbolsByName(
         commitId,
         input.symbol_name,
@@ -151,47 +178,87 @@ export class StructuredQueryEngine {
         return { success: false, usages: [], total_count: 0, error };
       }
 
-      // Find usages by name
+      // Helper to convert usage records to UsageInfo with context
+      const recordsToUsageInfo = async (records: UsageRecord[]): Promise<UsageInfo[]> => {
+        const usages: UsageInfo[] = [];
+        for (const record of records) {
+          // Get context snippet
+          let contextSnippet = '';
+          try {
+            const { content } = await git.readFileAtCommit(
+              input.commit,
+              record.file_path
+            );
+            contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
+          } catch {
+            // File might not exist, skip context
+          }
+
+          // Get enclosing symbol name
+          let enclosingSymbol: string | undefined;
+          if (record.enclosing_symbol_id) {
+            const enclosing = this.sqi.getSymbolById(record.enclosing_symbol_id);
+            if (enclosing) {
+              enclosingSymbol = enclosing.qualified_name;
+            }
+          }
+
+          usages.push({
+            file_path: record.file_path,
+            line: record.line,
+            column: record.column,
+            usage_type: record.usage_type,
+            context_snippet: contextSnippet,
+            enclosing_symbol: enclosingSymbol,
+          });
+        }
+        return usages;
+      };
+
+      // Fuzzy search mode
+      if (input.fuzzy) {
+        const fuzzyOptions: { filePath?: string; minSimilarity?: number; fuzzyLimit?: number } = {
+          minSimilarity: input.min_similarity ?? 0.3,
+          fuzzyLimit: 5,
+        };
+        if (input.file_path) {
+          fuzzyOptions.filePath = input.file_path;
+        }
+
+        const result = this.sqi.findUsagesWithFuzzy(commitId, input.symbol_name, fuzzyOptions);
+
+        const usages = await recordsToUsageInfo(result.exact);
+
+        // Build fuzzy matches
+        const fuzzyMatches: FuzzyUsageMatch[] = [];
+        for (const match of result.fuzzy) {
+          const matchUsages = await recordsToUsageInfo(match.usages);
+          fuzzyMatches.push({
+            symbol_name: match.symbolName,
+            similarity: match.similarity,
+            usages: matchUsages,
+          });
+        }
+
+        const output: FindUsagesOutput = {
+          success: true,
+          usages,
+          total_count: usages.length,
+        };
+        if (fuzzyMatches.length > 0) {
+          output.fuzzy_matches = fuzzyMatches;
+        }
+        return output;
+      }
+
+      // Standard exact search
       const usageRecords = this.sqi.findUsagesByName(
         commitId,
         input.symbol_name,
         input.file_path
       );
 
-      // Build usage info with context snippets
-      const usages: UsageInfo[] = [];
-
-      for (const record of usageRecords) {
-        // Get context snippet
-        let contextSnippet = '';
-        try {
-          const { content } = await git.readFileAtCommit(
-            input.commit,
-            record.file_path
-          );
-          contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
-        } catch {
-          // File might not exist, skip context
-        }
-
-        // Get enclosing symbol name
-        let enclosingSymbol: string | undefined;
-        if (record.enclosing_symbol_id) {
-          const enclosing = this.sqi.getSymbolById(record.enclosing_symbol_id);
-          if (enclosing) {
-            enclosingSymbol = enclosing.qualified_name;
-          }
-        }
-
-        usages.push({
-          file_path: record.file_path,
-          line: record.line,
-          column: record.column,
-          usage_type: record.usage_type,
-          context_snippet: contextSnippet,
-          enclosing_symbol: enclosingSymbol,
-        });
-      }
+      const usages = await recordsToUsageInfo(usageRecords);
 
       return {
         success: true,

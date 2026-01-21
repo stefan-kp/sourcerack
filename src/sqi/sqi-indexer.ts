@@ -130,6 +130,10 @@ export class SQIIndexer {
             importsExtracted += importIds.length;
           } else {
             filesFailed++;
+            // Log parse failures for visibility
+            if (result.error) {
+              console.warn(`⚠️  SQI extraction failed for ${file.path}: ${result.error}`);
+            }
           }
 
           filesProcessed++;
@@ -145,6 +149,9 @@ export class SQIIndexer {
         } catch (error) {
           filesFailed++;
           filesProcessed++;
+          // Log extraction errors
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.warn(`⚠️  SQI extraction error for ${file.path}: ${errorMsg}`);
           // Continue with other files
         }
       }
@@ -164,6 +171,11 @@ export class SQIIndexer {
 
       if (onProgress) {
         onProgress({ type: 'completed' });
+      }
+
+      // Log summary if there were failures
+      if (filesFailed > 0) {
+        console.warn(`⚠️  SQI: ${filesFailed} file(s) failed to extract (symbols from these files won't be searchable)`);
       }
 
       return {

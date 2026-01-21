@@ -9,7 +9,7 @@ import { withContext } from '../context.js';
 import { detectRepoContext } from '../git-detect.js';
 import { handleError, ExitCode } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
-import type { UsageInfo, ExtractedUsage } from '../../sqi/types.js';
+import type { UsageInfo, ExtractedUsage, FuzzyUsageMatch } from '../../sqi/types.js';
 import { getDirtySymbols, flattenDirtyUsages } from '../../dirty/index.js';
 
 /**
@@ -21,6 +21,7 @@ interface FindUsagesOptions {
   file?: string;
   json?: boolean;
   dirty?: boolean;
+  fuzzy?: boolean;
 }
 
 /**
@@ -100,18 +101,26 @@ async function executeFindUsages(
       async (context) => {
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
-        return await queryEngine.findUsages({
+        const input: Parameters<typeof queryEngine.findUsages>[0] = {
           repo_path: repoContext.repoPath,
           commit: repoContext.commitSha,
           symbol_name: symbolName,
-          file_path: options.file,
-        });
+        };
+        if (options.file) {
+          input.file_path = options.file;
+        }
+        if (options.fuzzy) {
+          input.fuzzy = true;
+        }
+
+        return await queryEngine.findUsages(input);
       },
       { skipEmbeddings: true, skipVectors: true }
     );
 
     // Merge results: dirty usages replace DB usages for the same file
     let allUsages: UsageInfo[] = [];
+    const fuzzyMatches: FuzzyUsageMatch[] = result.fuzzy_matches ?? [];
 
     if (result.success) {
       // Filter out DB usages from dirty files (they're replaced)
@@ -126,37 +135,85 @@ async function executeFindUsages(
 
     // Output results
     if (isJson) {
-      const output = {
+      const output: {
+        success: boolean;
+        usages: UsageInfo[];
+        total_count: number;
+        dirty_files_checked: number;
+        fuzzy_matches?: FuzzyUsageMatch[];
+        error?: string;
+      } = {
         success: result.success || dirtyUsages.length > 0,
         usages: allUsages,
         total_count: allUsages.length,
         dirty_files_checked: includeDirty ? dirtyFilePaths.size : 0,
-        error: result.success ? undefined : result.error,
       };
+      if (fuzzyMatches.length > 0) {
+        output.fuzzy_matches = fuzzyMatches;
+      }
+      if (!result.success && result.error) {
+        output.error = result.error;
+      }
       console.log(JSON.stringify(output, null, 2));
-    } else if (!result.success && dirtyUsages.length === 0) {
+    } else if (!result.success && dirtyUsages.length === 0 && fuzzyMatches.length === 0) {
       console.error(`Error: ${result.error}`);
       process.exit(ExitCode.GENERAL_ERROR);
-    } else if (allUsages.length === 0) {
+    } else if (allUsages.length === 0 && fuzzyMatches.length === 0) {
       console.log(`No usages found for: ${symbolName}`);
     } else {
-      const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
-      console.log(`Found ${allUsages.length} usage(s) of "${symbolName}"${dirtyNote}:\n`);
+      // Print exact matches
+      if (allUsages.length > 0) {
+        const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
+        console.log(`Found ${allUsages.length} exact usage(s) of "${symbolName}"${dirtyNote}:\n`);
 
-      // Group by file
-      const byFile = new Map<string, UsageInfo[]>();
-      for (const usage of allUsages) {
-        const existing = byFile.get(usage.file_path) ?? [];
-        existing.push(usage);
-        byFile.set(usage.file_path, existing);
+        // Group by file
+        const byFile = new Map<string, UsageInfo[]>();
+        for (const usage of allUsages) {
+          const existing = byFile.get(usage.file_path) ?? [];
+          existing.push(usage);
+          byFile.set(usage.file_path, existing);
+        }
+
+        for (const [filePath, usages] of byFile) {
+          console.log(`📄 ${filePath} (${usages.length} usages)`);
+          for (const usage of usages) {
+            console.log(formatUsageInfo(usage));
+          }
+          console.log('');
+        }
+      } else if (options.fuzzy) {
+        console.log(`No exact usages found for "${symbolName}"\n`);
       }
 
-      for (const [filePath, usages] of byFile) {
-        console.log(`📄 ${filePath} (${usages.length} usages)`);
-        for (const usage of usages) {
-          console.log(formatUsageInfo(usage));
+      // Print fuzzy matches
+      if (fuzzyMatches.length > 0) {
+        console.log(`Similar symbol usages (fuzzy):\n`);
+        for (const match of fuzzyMatches) {
+          const similarity = Math.round(match.similarity * 100);
+          console.log(`🔍 "${match.symbol_name}" (${similarity}% similar) - ${match.usages.length} usage(s):`);
+
+          // Group by file
+          const byFile = new Map<string, UsageInfo[]>();
+          for (const usage of match.usages) {
+            const existing = byFile.get(usage.file_path) ?? [];
+            existing.push(usage);
+            byFile.set(usage.file_path, existing);
+          }
+
+          for (const [filePath, usages] of byFile) {
+            console.log(`  📄 ${filePath}`);
+            for (const usage of usages) {
+              const loc = `${usage.line}:${usage.column}`;
+              const typeBadge = `[${usage.usage_type}]`;
+              let line = `    ${loc}  ${typeBadge}`;
+              if (usage.enclosing_symbol) {
+                line += `  in ${usage.enclosing_symbol}`;
+              }
+              console.log(line);
+            }
+          }
+          console.log('');
         }
-        console.log('');
       }
     }
   } catch (error) {
@@ -177,6 +234,7 @@ export function registerFindUsagesCommand(program: Command): void {
     .option('-f, --file <path>', 'Limit search to a specific file')
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
+    .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
     .action(async (symbolName: string, options: FindUsagesOptions) => {
       await executeFindUsages(symbolName, options);
     });

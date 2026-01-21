@@ -345,6 +345,18 @@ export interface FindDefinitionInput {
   commit: string;
   symbol_name: string;
   symbol_kind?: SymbolKind | undefined;
+  /** Enable fuzzy matching with trigram similarity */
+  fuzzy?: boolean;
+  /** Minimum similarity threshold for fuzzy matches (0-1, default 0.3) */
+  min_similarity?: number;
+}
+
+/**
+ * Fuzzy match result with similarity score
+ */
+export interface FuzzyMatch {
+  symbol: SymbolInfo;
+  similarity: number;
 }
 
 /**
@@ -353,6 +365,8 @@ export interface FindDefinitionInput {
 export interface FindDefinitionOutput {
   success: boolean;
   definitions: SymbolInfo[];
+  /** Fuzzy matches (only populated when fuzzy=true) */
+  fuzzy_matches?: FuzzyMatch[];
   error?: string | undefined;
 }
 
@@ -364,6 +378,17 @@ export interface FindUsagesInput {
   commit: string;
   symbol_name: string;
   file_path?: string | undefined;
+  fuzzy?: boolean;
+  min_similarity?: number;
+}
+
+/**
+ * Fuzzy usage match with similarity score
+ */
+export interface FuzzyUsageMatch {
+  symbol_name: string;
+  similarity: number;
+  usages: UsageInfo[];
 }
 
 /**
@@ -373,6 +398,7 @@ export interface FindUsagesOutput {
   success: boolean;
   usages: UsageInfo[];
   total_count: number;
+  fuzzy_matches?: FuzzyUsageMatch[];
   error?: string | undefined;
 }
 

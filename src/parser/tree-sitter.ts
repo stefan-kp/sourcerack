@@ -84,7 +84,7 @@ class TreeSitterParser {
       );
     }
 
-    this.parser.setLanguage(grammar);
+    this.parser.setLanguage(grammar as Parser.Language);
     return this.parser.parse(code);
   }
 

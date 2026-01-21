@@ -86,7 +86,7 @@ c_sharp:
 ruby:
   extensions: [".rb", ".rake", ".gemspec"]
   package: "tree-sitter-ruby"
-  version: "^0.23.0"
+  version: "^0.23.1"
   tier: optional
   sourcePaths: ["app/", "lib/", "src/", "spec/", "test/"]
 

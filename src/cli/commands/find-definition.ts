@@ -9,7 +9,7 @@ import { withContext } from '../context.js';
 import { detectRepoContext } from '../git-detect.js';
 import { handleError, ExitCode, AgentErrors, exitWithAgentError } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
-import type { SymbolKind, SymbolInfo, ExtractedSymbol } from '../../sqi/types.js';
+import type { SymbolKind, SymbolInfo, ExtractedSymbol, FuzzyMatch } from '../../sqi/types.js';
 import { getDirtySymbols, flattenDirtySymbols } from '../../dirty/index.js';
 
 /**
@@ -21,6 +21,7 @@ interface FindDefOptions {
   type?: string;
   json?: boolean;
   dirty?: boolean;
+  fuzzy?: boolean;
 }
 
 /**
@@ -126,12 +127,18 @@ async function executeFindDef(
       async (context) => {
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
-        return await queryEngine.findDefinition({
+        const input: Parameters<typeof queryEngine.findDefinition>[0] = {
           repo_path: repoContext.repoPath,
           commit: repoContext.commitSha,
           symbol_name: symbolName,
-          symbol_kind: options.type as SymbolKind | undefined,
-        });
+        };
+        if (options.type) {
+          input.symbol_kind = options.type as SymbolKind;
+        }
+        if (options.fuzzy) {
+          input.fuzzy = true;
+        }
+        return await queryEngine.findDefinition(input);
       },
       { skipEmbeddings: true, skipVectors: true }
     );
@@ -150,11 +157,15 @@ async function executeFindDef(
       allDefinitions = dirtyDefinitions;
     }
 
+    // Get fuzzy matches
+    const fuzzyMatches: FuzzyMatch[] = result.fuzzy_matches ?? [];
+
     // Output results
     if (isJson) {
       const output = {
         success: result.success || dirtyDefinitions.length > 0,
         definitions: allDefinitions,
+        fuzzy_matches: fuzzyMatches,
         dirty_files_checked: includeDirty ? dirtyFilePaths.size : 0,
         error: result.success ? undefined : result.error,
       };
@@ -170,18 +181,33 @@ async function executeFindDef(
       }
       console.error(`Error: ${result.error}`);
       process.exit(ExitCode.GENERAL_ERROR);
-    } else if (allDefinitions.length === 0) {
+    } else if (allDefinitions.length === 0 && fuzzyMatches.length === 0) {
       exitWithAgentError(
         AgentErrors.symbolNotFound(symbolName),
         ExitCode.NOT_FOUND,
         isJson
       );
     } else {
-      const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
-      console.log(`Found ${allDefinitions.length} definition(s) for "${symbolName}"${dirtyNote}:\n`);
-      for (const def of allDefinitions) {
-        console.log(formatSymbolInfo(def, true));
-        console.log('');
+      // Print exact matches
+      if (allDefinitions.length > 0) {
+        const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
+        console.log(`Found ${allDefinitions.length} exact match(es) for "${symbolName}"${dirtyNote}:\n`);
+        for (const def of allDefinitions) {
+          console.log(formatSymbolInfo(def, true));
+          console.log('');
+        }
+      } else if (fuzzyMatches.length > 0) {
+        console.log(`No exact matches for "${symbolName}"\n`);
+      }
+
+      // Print fuzzy matches
+      if (fuzzyMatches.length > 0) {
+        console.log(`Similar matches (fuzzy):\n`);
+        for (const match of fuzzyMatches) {
+          const similarity = Math.round(match.similarity * 100);
+          console.log(`${formatSymbolInfo(match.symbol, true)}  (${similarity}% similar)`);
+          console.log('');
+        }
       }
     }
   } catch (error) {
@@ -202,6 +228,7 @@ export function registerFindDefCommand(program: Command): void {
     .option('-t, --type <kind>', 'Filter by symbol type (function, class, method, interface)')
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
+    .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
     .action(async (symbolName: string, options: FindDefOptions) => {
       await executeFindDef(symbolName, options);
     });
