@@ -938,6 +938,90 @@ export class SQIStorage {
     };
   }
 
+  // ==================== Codebase Summary Queries ====================
+
+  getSymbolCountsByKind(commitId: number): { kind: string; count: number }[] {
+    return this.db
+      .prepare(`SELECT symbol_kind as kind, COUNT(*) as count FROM symbols WHERE commit_id = ? GROUP BY symbol_kind ORDER BY count DESC`)
+      .all(commitId) as { kind: string; count: number }[];
+  }
+
+  getFileCountsByExtension(commitId: number): { extension: string; count: number }[] {
+    return this.db
+      .prepare(`
+        SELECT
+          CASE WHEN file_path LIKE '%.ts' OR file_path LIKE '%.tsx' THEN 'typescript'
+               WHEN file_path LIKE '%.js' OR file_path LIKE '%.jsx' THEN 'javascript'
+               WHEN file_path LIKE '%.py' THEN 'python'
+               WHEN file_path LIKE '%.rb' THEN 'ruby'
+               ELSE 'other' END as extension,
+          COUNT(DISTINCT file_path) as count
+        FROM symbols WHERE commit_id = ? GROUP BY extension ORDER BY count DESC
+      `).all(commitId) as { extension: string; count: number }[];
+  }
+
+  getSymbolCountsByExtension(commitId: number): { extension: string; count: number }[] {
+    return this.db
+      .prepare(`
+        SELECT
+          CASE WHEN file_path LIKE '%.ts' OR file_path LIKE '%.tsx' THEN 'typescript'
+               WHEN file_path LIKE '%.js' OR file_path LIKE '%.jsx' THEN 'javascript'
+               WHEN file_path LIKE '%.py' THEN 'python'
+               WHEN file_path LIKE '%.rb' THEN 'ruby'
+               ELSE 'other' END as extension,
+          COUNT(*) as count
+        FROM symbols WHERE commit_id = ? GROUP BY extension ORDER BY count DESC
+      `).all(commitId) as { extension: string; count: number }[];
+  }
+
+  getModuleStats(commitId: number, maxModules: number = 10): { path: string; file_count: number; symbol_count: number }[] {
+    return this.db
+      .prepare(`
+        SELECT CASE WHEN INSTR(file_path, '/') > 0 THEN SUBSTR(file_path, 1, INSTR(file_path, '/') - 1) ELSE file_path END as path,
+               COUNT(DISTINCT file_path) as file_count, COUNT(*) as symbol_count
+        FROM symbols WHERE commit_id = ? GROUP BY path ORDER BY symbol_count DESC LIMIT ?
+      `).all(commitId, maxModules) as { path: string; file_count: number; symbol_count: number }[];
+  }
+
+  getModuleMainSymbols(commitId: number, modulePath: string, limit: number = 5): string[] {
+    const rows = this.db
+      .prepare(`SELECT name FROM symbols WHERE commit_id = ? AND file_path LIKE ? AND is_exported = 1 AND parent_symbol_id IS NULL AND symbol_kind IN ('function', 'class', 'interface') ORDER BY CASE symbol_kind WHEN 'class' THEN 1 WHEN 'interface' THEN 2 ELSE 3 END LIMIT ?`)
+      .all(commitId, modulePath + '%', limit) as { name: string }[];
+    return rows.map(r => r.name);
+  }
+
+  getHotspots(commitId: number, limit: number = 10): { symbol_id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; usage_count: number }[] {
+    return this.db
+      .prepare(`SELECT s.id as symbol_id, s.name, s.qualified_name, s.symbol_kind, s.file_path, COUNT(u.id) as usage_count FROM symbols s LEFT JOIN usages u ON u.definition_symbol_id = s.id WHERE s.commit_id = ? AND s.symbol_kind IN ('function', 'method', 'class', 'interface') GROUP BY s.id HAVING usage_count > 0 ORDER BY usage_count DESC LIMIT ?`)
+      .all(commitId, limit) as { symbol_id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; usage_count: number }[];
+  }
+
+  getEntryPointFiles(commitId: number): { file_path: string; type: string }[] {
+    return this.db
+      .prepare(`SELECT DISTINCT file_path, CASE WHEN file_path LIKE '%/index.%' OR file_path LIKE 'index.%' THEN 'index' WHEN file_path LIKE '%/main.%' OR file_path LIKE 'main.%' THEN 'main' WHEN file_path LIKE '%/app.%' OR file_path LIKE 'app.%' THEN 'app' WHEN file_path LIKE '%/server.%' OR file_path LIKE 'server.%' THEN 'server' ELSE 'entry' END as type FROM symbols WHERE commit_id = ? AND (file_path LIKE '%/index.%' OR file_path LIKE 'index.%' OR file_path LIKE '%/main.%' OR file_path LIKE 'main.%' OR file_path LIKE '%/app.%' OR file_path LIKE 'app.%' OR file_path LIKE '%/server.%' OR file_path LIKE 'server.%')`)
+      .all(commitId) as { file_path: string; type: string }[];
+  }
+
+  getExportedSymbols(commitId: number, filePath: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT name FROM symbols WHERE commit_id = ? AND file_path = ? AND is_exported = 1 AND parent_symbol_id IS NULL ORDER BY start_line`)
+      .all(commitId, filePath) as { name: string }[];
+    return rows.map(r => r.name);
+  }
+
+  getExternalDependencies(commitId: number, limit: number = 20): { name: string; import_count: number }[] {
+    return this.db
+      .prepare(`SELECT CASE WHEN module_specifier LIKE '@%/%' THEN SUBSTR(module_specifier, 1, INSTR(SUBSTR(module_specifier, 2), '/') + 1) WHEN INSTR(module_specifier, '/') > 0 THEN SUBSTR(module_specifier, 1, INSTR(module_specifier, '/') - 1) ELSE module_specifier END as name, COUNT(*) as import_count FROM imports WHERE commit_id = ? AND module_specifier NOT LIKE '.%' AND module_specifier NOT LIKE '/%' GROUP BY name ORDER BY import_count DESC LIMIT ?`)
+      .all(commitId, limit) as { name: string; import_count: number }[];
+  }
+
+  getDependencyImporters(commitId: number, dependencyName: string): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT file_path FROM imports WHERE commit_id = ? AND (module_specifier = ? OR module_specifier LIKE ? || '/%') ORDER BY file_path LIMIT 10`)
+      .all(commitId, dependencyName, dependencyName) as { file_path: string }[];
+    return rows.map(r => r.file_path);
+  }
+
   // ==================== Context Snippet ====================
 
   /**
