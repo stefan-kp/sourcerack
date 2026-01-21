@@ -8,7 +8,7 @@
 /**
  * Current skill version - update this when the skill content changes
  */
-export const SKILL_VERSION = '0.4.0';
+export const SKILL_VERSION = '0.5.0';
 
 /**
  * Generate the main SKILL.md content
@@ -177,6 +177,59 @@ Shows all indexed repositories with their paths and commit info.
 
 **Options:**
 - \`--json\`: Output in JSON format
+
+### Get codebase summary (Agent-optimized)
+\`\`\`bash
+sourcerack summary [path]
+\`\`\`
+Get a comprehensive overview of the codebase - perfect for understanding a new project.
+
+**Output includes:**
+- Statistics (files, symbols, usages, imports)
+- Language breakdown with percentages
+- Main modules with their key exports
+- Entry points (index.ts, main.py, etc.)
+- Hotspots (most-used symbols)
+- External dependencies
+
+**Options:**
+- \`--modules <n>\`: Maximum modules to show
+- \`--hotspots <n>\`: Maximum hotspots to show
+- \`--no-deps\`: Skip dependency analysis
+- \`--no-hotspots\`: Skip hotspot analysis
+- \`--json\`: Output in JSON format
+
+**Example:**
+\`\`\`bash
+sourcerack summary
+# Returns: Language breakdown, main modules, hotspots, dependencies
+\`\`\`
+
+### Get symbol context (Agent-optimized)
+\`\`\`bash
+sourcerack context <symbol> [path]
+\`\`\`
+Get everything about a symbol in one call - source code, usages, imports, related symbols.
+
+**Output includes:**
+- Full symbol info (kind, location, visibility, parameters)
+- Source code of the symbol
+- All usages with context snippets
+- Imports used by the file
+- Files that import this symbol
+- Related symbols in the same file
+
+**Options:**
+- \`--max-usages <n>\`: Maximum usages to return
+- \`--no-source\`: Skip source code
+- \`--no-usages\`: Skip usages
+- \`--json\`: Output in JSON format
+
+**Example:**
+\`\`\`bash
+sourcerack context UserService
+# Returns: Full class definition, all 15 usages, imports, etc.
+\`\`\`
 
 ## Workflow
 
