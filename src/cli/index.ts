@@ -20,6 +20,9 @@ import { registerSetupCommand } from './commands/setup.js';
 // Agent-focused commands
 import { registerSummaryCommand } from './commands/summary.js';
 import { registerContextCommand } from './commands/context.js';
+// LSP-differentiating commands
+import { registerDeadCodeCommand } from './commands/dead-code.js';
+import { registerImpactCommand } from './commands/impact.js';
 
 /**
  * Create and configure the CLI program
@@ -52,6 +55,10 @@ function createProgram(): Command {
   // Agent-focused commands
   registerSummaryCommand(program);
   registerContextCommand(program);
+
+  // LSP-differentiating commands
+  registerDeadCodeCommand(program);
+  registerImpactCommand(program);
 
   return program;
 }

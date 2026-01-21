@@ -522,9 +522,23 @@ export class TypeScriptExtractor extends SymbolExtractor {
         return true;
       }
 
-      // Skip formal parameters
-      if (current.type === 'formal_parameters') {
-        return true;
+      // Skip parameter names but NOT type annotations
+      // AST: required_parameter has pattern (name) and type (type_annotation)
+      // We want to skip the pattern/name, but track type references
+      if (
+        current.type === 'required_parameter' ||
+        current.type === 'optional_parameter' ||
+        current.type === 'rest_parameter'
+      ) {
+        const patternNode = this.getChildByField(current, 'pattern');
+        // Only skip if this node IS the parameter name
+        if (patternNode?.id === node.id) return true;
+        // Check if we're inside the pattern subtree (for destructuring patterns)
+        let checkNode = node.parent;
+        while (checkNode && checkNode.id !== current.id) {
+          if (checkNode.id === patternNode?.id) return true;
+          checkNode = checkNode.parent;
+        }
       }
 
       // Skip property definitions (as name)

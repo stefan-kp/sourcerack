@@ -607,3 +607,80 @@ export interface GetSymbolContextOutput {
   };
   error?: string;
 }
+
+
+// ============================================================================
+// Dead Code Detection Types
+// ============================================================================
+
+/**
+ * Information about a potentially dead (unused) symbol
+ */
+export interface DeadSymbolInfo {
+  name: string;
+  qualified_name: string;
+  kind: SymbolKind;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  is_exported: boolean;
+}
+
+/**
+ * Input for finding dead code in a codebase
+ */
+export interface FindDeadCodeInput {
+  repo_path: string;
+  commit: string;
+  exported_only?: boolean;
+  limit?: number;
+}
+
+/**
+ * Output from dead code detection
+ */
+export interface FindDeadCodeOutput {
+  success: boolean;
+  dead_symbols: DeadSymbolInfo[];
+  exported_count: number;
+  unexported_count: number;
+  error?: string;
+}
+
+// ============================================================================
+// Change Impact Analysis Types
+// ============================================================================
+
+/**
+ * Information about a symbol affected by a change
+ */
+export interface ImpactInfo {
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  start_line: number;
+  depth: number;
+  usage_type: UsageType;
+}
+
+/**
+ * Input for change impact analysis
+ */
+export interface ChangeImpactInput {
+  repo_path: string;
+  commit: string;
+  symbol_name: string;
+  max_depth?: number;
+}
+
+/**
+ * Output from change impact analysis
+ */
+export interface ChangeImpactOutput {
+  success: boolean;
+  symbol?: SymbolInfo;
+  direct_usages: UsageInfo[];
+  transitive_impact: ImpactInfo[];
+  total_affected: number;
+  error?: string;
+}

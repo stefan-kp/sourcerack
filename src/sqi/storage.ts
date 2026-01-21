@@ -1125,6 +1125,109 @@ export class SQIStorage {
       .all(commitId, limit) as { symbol_id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; usage_count: number }[];
   }
 
+  /**
+   * Get symbols with zero usages (dead code candidates).
+   * Focuses on top-level symbols that could be unused exports or internal code.
+   */
+  getDeadSymbols(
+    commitId: number,
+    options: { exportedOnly?: boolean; limit?: number } = {}
+  ): {
+    symbol_id: number;
+    name: string;
+    qualified_name: string;
+    symbol_kind: string;
+    file_path: string;
+    start_line: number;
+    end_line: number;
+    is_exported: boolean;
+  }[] {
+    const { exportedOnly = false, limit = 50 } = options;
+
+    let whereClause = `s.commit_id = ?
+      AND s.symbol_kind IN ('function', 'method', 'class', 'interface', 'type_alias')
+      AND s.parent_symbol_id IS NULL`;
+
+    if (exportedOnly) {
+      whereClause += ' AND s.is_exported = 1';
+    }
+
+    return this.db
+      .prepare(
+        `SELECT s.id as symbol_id, s.name, s.qualified_name, s.symbol_kind,
+                s.file_path, s.start_line, s.end_line, s.is_exported
+         FROM symbols s
+         LEFT JOIN usages u ON u.definition_symbol_id = s.id
+         WHERE ${whereClause}
+         GROUP BY s.id
+         HAVING COUNT(u.id) = 0
+         ORDER BY s.is_exported DESC, s.file_path, s.start_line
+         LIMIT ?`
+      )
+      .all(commitId, limit) as {
+      symbol_id: number;
+      name: string;
+      qualified_name: string;
+      symbol_kind: string;
+      file_path: string;
+      start_line: number;
+      end_line: number;
+      is_exported: boolean;
+    }[];
+  }
+
+  /**
+   * Get transitive impact of changing a symbol.
+   * Uses recursive CTE to find all symbols that directly or transitively use this symbol.
+   */
+  getTransitiveImpact(
+    commitId: number,
+    symbolId: number,
+    maxDepth: number = 3
+  ): {
+    symbol_id: number;
+    name: string;
+    qualified_name: string;
+    file_path: string;
+    start_line: number;
+    depth: number;
+    usage_type: string;
+  }[] {
+    return this.db
+      .prepare(
+        `WITH RECURSIVE impact_chain AS (
+          -- Base case: direct usages
+          SELECT u.enclosing_symbol_id as symbol_id, 1 as depth, u.usage_type
+          FROM usages u
+          WHERE u.definition_symbol_id = ? AND u.enclosing_symbol_id IS NOT NULL
+
+          UNION
+
+          -- Recursive case: usages of the enclosing symbols
+          SELECT u2.enclosing_symbol_id, ic.depth + 1, u2.usage_type
+          FROM impact_chain ic
+          JOIN usages u2 ON u2.definition_symbol_id = ic.symbol_id
+          WHERE ic.depth < ? AND u2.enclosing_symbol_id IS NOT NULL
+        )
+        SELECT DISTINCT s.id as symbol_id, s.name, s.qualified_name,
+               s.file_path, s.start_line, MIN(ic.depth) as depth, ic.usage_type
+        FROM impact_chain ic
+        JOIN symbols s ON s.id = ic.symbol_id
+        WHERE s.commit_id = ?
+        GROUP BY s.id
+        ORDER BY depth, s.file_path`
+      )
+      .all(symbolId, maxDepth, commitId) as {
+      symbol_id: number;
+      name: string;
+      qualified_name: string;
+      file_path: string;
+      start_line: number;
+      depth: number;
+      usage_type: string;
+    }[];
+  }
+
   getEntryPointFiles(commitId: number): { file_path: string; type: string }[] {
     return this.db
       .prepare(`SELECT DISTINCT file_path, CASE WHEN file_path LIKE '%/index.%' OR file_path LIKE 'index.%' THEN 'index' WHEN file_path LIKE '%/main.%' OR file_path LIKE 'main.%' THEN 'main' WHEN file_path LIKE '%/app.%' OR file_path LIKE 'app.%' THEN 'app' WHEN file_path LIKE '%/server.%' OR file_path LIKE 'server.%' THEN 'server' ELSE 'entry' END as type FROM symbols WHERE commit_id = ? AND (file_path LIKE '%/index.%' OR file_path LIKE 'index.%' OR file_path LIKE '%/main.%' OR file_path LIKE 'main.%' OR file_path LIKE '%/app.%' OR file_path LIKE 'app.%' OR file_path LIKE '%/server.%' OR file_path LIKE 'server.%')`)

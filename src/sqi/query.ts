@@ -12,6 +12,7 @@ import {
   SymbolKind,
   SymbolInfo,
   UsageInfo,
+  UsageType,
   ImportInfo,
   ImportBindingInfo,
   ParameterInfo,
@@ -38,6 +39,12 @@ import {
   DependencyInfo,
   GetSymbolContextInput,
   GetSymbolContextOutput,
+  FindDeadCodeInput,
+  FindDeadCodeOutput,
+  DeadSymbolInfo,
+  ChangeImpactInput,
+  ChangeImpactOutput,
+  ImpactInfo,
 } from './types.js';
 
 /**
@@ -552,6 +559,166 @@ export class StructuredQueryEngine {
       return { success: true, summary: { total_files: stats.files, total_symbols: stats.symbols, total_usages: stats.usages, total_imports: stats.imports, languages, modules, entry_points, hotspots, dependencies, symbol_breakdown } };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+
+  /**
+   * Find dead code (symbols with no usages).
+   * This is a key differentiator from LSP - analyzing cross-file dead code.
+   */
+  async findDeadCode(input: FindDeadCodeInput): Promise<FindDeadCodeOutput> {
+    try {
+      const { commitId, error } = await this.resolveCommit(input.repo_path, input.commit);
+      if (error || !commitId) {
+        return {
+          success: false,
+          dead_symbols: [],
+          exported_count: 0,
+          unexported_count: 0,
+          error: error ?? 'Failed to resolve commit',
+        };
+      }
+
+      const deadSymbolOptions: { exportedOnly?: boolean; limit?: number } = {
+        limit: input.limit ?? 50,
+      };
+      if (input.exported_only !== undefined) {
+        deadSymbolOptions.exportedOnly = input.exported_only;
+      }
+
+      const raw = this.sqi.getDeadSymbols(commitId, deadSymbolOptions);
+
+      const dead_symbols: DeadSymbolInfo[] = raw.map((s) => ({
+        name: s.name,
+        qualified_name: s.qualified_name,
+        kind: s.symbol_kind as SymbolKind,
+        file_path: s.file_path,
+        start_line: s.start_line,
+        end_line: s.end_line,
+        is_exported: s.is_exported ? true : false,
+      }));
+
+      return {
+        success: true,
+        dead_symbols,
+        exported_count: dead_symbols.filter((s) => s.is_exported).length,
+        unexported_count: dead_symbols.filter((s) => !s.is_exported).length,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        dead_symbols: [],
+        exported_count: 0,
+        unexported_count: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Analyze the impact of changing a symbol.
+   * Shows direct usages and transitive impact through the call graph.
+   */
+  async analyzeChangeImpact(input: ChangeImpactInput): Promise<ChangeImpactOutput> {
+    try {
+      const { commitId, error, git } = await this.resolveCommit(input.repo_path, input.commit);
+      if (error || !commitId || !git) {
+        return {
+          success: false,
+          direct_usages: [],
+          transitive_impact: [],
+          total_affected: 0,
+          error: error ?? 'Failed to resolve commit',
+        };
+      }
+
+      // Find the symbol first
+      const symbols = this.sqi.findSymbolsByName(commitId, input.symbol_name);
+      if (symbols.length === 0) {
+        return {
+          success: false,
+          direct_usages: [],
+          transitive_impact: [],
+          total_affected: 0,
+          error: `Symbol not found: ${input.symbol_name}`,
+        };
+      }
+
+      // Use the first matching symbol (could enhance to be more specific)
+      const targetSymbol = symbols[0]!;
+      const symbolInfo = this.symbolRecordToInfo(targetSymbol);
+
+      // Get direct usages
+      const usageRecords = this.sqi.findUsagesByDefinition(targetSymbol.id);
+      const direct_usages: UsageInfo[] = [];
+
+      for (const record of usageRecords) {
+        let contextSnippet = '';
+        try {
+          const { content } = await git.readFileAtCommit(input.commit, record.file_path);
+          contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
+        } catch {
+          // File might not exist, skip context
+        }
+
+        let enclosingSymbol: string | undefined;
+        if (record.enclosing_symbol_id) {
+          const enclosing = this.sqi.getSymbolById(record.enclosing_symbol_id);
+          if (enclosing) {
+            enclosingSymbol = enclosing.qualified_name;
+          }
+        }
+
+        direct_usages.push({
+          file_path: record.file_path,
+          line: record.line,
+          column: record.column,
+          usage_type: record.usage_type,
+          context_snippet: contextSnippet,
+          enclosing_symbol: enclosingSymbol,
+        });
+      }
+
+      // Get transitive impact
+      const maxDepth = input.max_depth ?? 3;
+      const transitiveRaw = this.sqi.getTransitiveImpact(commitId, targetSymbol.id, maxDepth);
+
+      const transitive_impact: ImpactInfo[] = transitiveRaw.map((t) => ({
+        name: t.name,
+        qualified_name: t.qualified_name,
+        file_path: t.file_path,
+        start_line: t.start_line,
+        depth: t.depth,
+        usage_type: t.usage_type as UsageType,
+      }));
+
+      // Count unique symbols affected (direct + transitive, avoiding duplicates)
+      const affectedSymbolIds = new Set<number>();
+      for (const usage of usageRecords) {
+        if (usage.enclosing_symbol_id) {
+          affectedSymbolIds.add(usage.enclosing_symbol_id);
+        }
+      }
+      for (const impact of transitiveRaw) {
+        affectedSymbolIds.add(impact.symbol_id);
+      }
+
+      return {
+        success: true,
+        symbol: symbolInfo,
+        direct_usages,
+        transitive_impact,
+        total_affected: affectedSymbolIds.size,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        direct_usages: [],
+        transitive_impact: [],
+        total_affected: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
