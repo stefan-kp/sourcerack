@@ -26,6 +26,10 @@ import { handleFindDefinition } from './tools/sqi-find-definition.js';
 import { handleFindUsages } from './tools/sqi-find-usages.js';
 import { handleFindHierarchy } from './tools/sqi-find-hierarchy.js';
 import { handleFindImports, handleFindImporters } from './tools/sqi-find-imports.js';
+import { handleCodebaseSummary } from './tools/sqi-codebase-summary.js';
+import { handleGetSymbolContext } from './tools/sqi-symbol-context.js';
+import { handleChangeImpact } from './tools/sqi-change-impact.js';
+import { handleDependencyGraph } from './tools/sqi-dependency-graph.js';
 import type {
   IndexCodebaseInput,
   QueryCodeInput,
@@ -37,6 +41,10 @@ import type {
   FindHierarchyInput,
   FindImportsInput,
   FindImportersInput,
+  CodebaseSummaryInput,
+  GetSymbolContextInput,
+  ChangeImpactInput,
+  DependencyGraphInput,
 } from '../sqi/types.js';
 
 /**
@@ -63,7 +71,7 @@ const TOOLS = [
           description: 'Branch name (optional, for reference)',
         },
       },
-      required: ['repo_path', 'commit'],
+      required: ['repo_path'],
     },
   },
   {
@@ -121,7 +129,7 @@ const TOOLS = [
           description: 'Commit SHA to check status for',
         },
       },
-      required: ['repo_path', 'commit'],
+      required: ['repo_path'],
     },
   },
   {
@@ -159,7 +167,7 @@ const TOOLS = [
           description: 'Filter by symbol kind (e.g., "function", "class", "method", "interface")',
         },
       },
-      required: ['repo_path', 'commit', 'symbol_name'],
+      required: ['repo_path', 'symbol_name'],
     },
   },
   {
@@ -186,7 +194,7 @@ const TOOLS = [
           description: 'Optional: limit search to a specific file',
         },
       },
-      required: ['repo_path', 'commit', 'symbol_name'],
+      required: ['repo_path', 'symbol_name'],
     },
   },
   {
@@ -261,6 +269,126 @@ const TOOLS = [
         },
       },
       required: ['repo_path', 'commit', 'module'],
+    },
+  },
+  {
+    name: 'codebase_summary',
+    description:
+      'Get a structured overview of a codebase: stats, languages, modules, entry points, hotspots, and dependencies.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Path to the repository on disk',
+        },
+        commit: {
+          type: 'string',
+          description: 'Commit SHA to analyze (must be indexed)',
+        },
+        include_hotspots: {
+          type: 'boolean',
+          description: 'Whether to include hotspot analysis (default: true)',
+        },
+        include_dependencies: {
+          type: 'boolean',
+          description: 'Whether to include external dependencies (default: true)',
+        },
+        max_modules: {
+          type: 'number',
+          description: 'Maximum number of modules to return (default: 10)',
+        },
+        max_hotspots: {
+          type: 'number',
+          description: 'Maximum number of hotspots to return (default: 10)',
+        },
+      },
+      required: ['repo_path'],
+    },
+  },
+  {
+    name: 'get_symbol_context',
+    description:
+      'Get rich context about a symbol: docs, source, usages, related symbols, and imports.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Path to the repository on disk',
+        },
+        commit: {
+          type: 'string',
+          description: 'Commit SHA to search within (must be indexed)',
+        },
+        symbol_name: {
+          type: 'string',
+          description: 'Name of the symbol to retrieve context for',
+        },
+        include_usages: {
+          type: 'boolean',
+          description: 'Whether to include usage references (default: true)',
+        },
+        include_source: {
+          type: 'boolean',
+          description: 'Whether to include source code (default: true)',
+        },
+        max_usages: {
+          type: 'number',
+          description: 'Maximum number of usages to return (default: 20)',
+        },
+      },
+      required: ['repo_path', 'symbol_name'],
+    },
+  },
+  {
+    name: 'change_impact',
+    description:
+      'Analyze the impact of changing a symbol by listing direct usages and transitive impact.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Path to the repository on disk',
+        },
+        commit: {
+          type: 'string',
+          description: 'Commit SHA to search within (must be indexed)',
+        },
+        symbol_name: {
+          type: 'string',
+          description: 'Name of the symbol to analyze',
+        },
+        max_depth: {
+          type: 'number',
+          description: 'Maximum depth for transitive impact traversal (default: 3)',
+        },
+      },
+      required: ['repo_path', 'symbol_name'],
+    },
+  },
+  {
+    name: 'dependency_graph',
+    description:
+      'Build a module-level dependency graph based on import relationships.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Path to the repository on disk',
+        },
+        commit: {
+          type: 'string',
+          description: 'Commit SHA to analyze (must be indexed)',
+        },
+        max_edges: {
+          type: 'number',
+          description: 'Maximum number of dependency edges to return (default: 50)',
+        },
+      },
+      required: ['repo_path'],
     },
   },
 ];
@@ -465,6 +593,54 @@ export async function createMCPServer(): Promise<Server> {
           case 'find_importers': {
             const input = args as unknown as FindImportersInput;
             const result = await handleFindImporters(input, metadata);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+          case 'codebase_summary': {
+            const input = args as unknown as CodebaseSummaryInput;
+            const result = await handleCodebaseSummary(input, metadata);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+          case 'get_symbol_context': {
+            const input = args as unknown as GetSymbolContextInput;
+            const result = await handleGetSymbolContext(input, metadata);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+          case 'change_impact': {
+            const input = args as unknown as ChangeImpactInput;
+            const result = await handleChangeImpact(input, metadata);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+          case 'dependency_graph': {
+            const input = args as unknown as DependencyGraphInput;
+            const result = await handleDependencyGraph(input, metadata);
             return {
               content: [
                 {

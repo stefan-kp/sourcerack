@@ -608,6 +608,32 @@ export interface GetSymbolContextOutput {
   error?: string;
 }
 
+// ============================================================================
+// Dependency Graph Types
+// ============================================================================
+
+export interface DependencyGraphInput {
+  repo_path: string;
+  commit: string;
+  max_edges?: number;
+}
+
+export interface DependencyEdge {
+  from: string;
+  to: string;
+  kind: 'internal' | 'external';
+  import_count: number;
+}
+
+export interface DependencyGraphOutput {
+  success: boolean;
+  graph?: {
+    nodes: string[];
+    edges: DependencyEdge[];
+  };
+  error?: string;
+}
+
 
 // ============================================================================
 // Dead Code Detection Types

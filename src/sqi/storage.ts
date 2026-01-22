@@ -1254,6 +1254,13 @@ export class SQIStorage {
     return rows.map(r => r.file_path);
   }
 
+  getImportFiles(commitId: number): string[] {
+    const rows = this.db
+      .prepare(`SELECT DISTINCT file_path FROM imports WHERE commit_id = ? ORDER BY file_path`)
+      .all(commitId) as { file_path: string }[];
+    return rows.map(r => r.file_path);
+  }
+
   // ==================== Context Snippet ====================
 
   /**

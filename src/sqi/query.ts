@@ -6,6 +6,7 @@
  */
 
 import { GitAdapter } from '../git/adapter.js';
+import { posix as path } from 'node:path';
 import { MetadataStorage } from '../storage/metadata.js';
 import { SQIStorage } from './storage.js';
 import {
@@ -37,6 +38,9 @@ import {
   HotspotInfo,
   EntryPointInfo,
   DependencyInfo,
+  DependencyGraphInput,
+  DependencyGraphOutput,
+  DependencyEdge,
   GetSymbolContextInput,
   GetSymbolContextOutput,
   FindDeadCodeInput,
@@ -776,6 +780,62 @@ export class StructuredQueryEngine {
     }
   }
 
+  // ==================== Dependency Graph ====================
+
+  async getDependencyGraph(input: DependencyGraphInput): Promise<DependencyGraphOutput> {
+    try {
+      const { commitId, error } = await this.resolveCommit(input.repo_path, input.commit);
+      if (error || !commitId) {
+        return { success: false, error: error ?? 'Failed to resolve commit' };
+      }
+
+      const importFiles = this.sqi.getImportFiles(commitId);
+      const edgeCounts = new Map<string, DependencyEdge>();
+      const nodes = new Set<string>();
+
+      for (const filePath of importFiles) {
+        const fromModule = this.getModuleNameForFile(filePath);
+        nodes.add(fromModule);
+
+        const imports = this.sqi.getImportsForFile(commitId, filePath);
+        for (const imp of imports) {
+          const target = this.normalizeDependencyTarget(filePath, imp.module_specifier);
+          if (!target) {
+            continue;
+          }
+
+          nodes.add(target.name);
+          const edgeKey = `${fromModule}::${target.name}::${target.kind}`;
+          const existing = edgeCounts.get(edgeKey);
+          if (existing) {
+            existing.import_count += 1;
+          } else {
+            edgeCounts.set(edgeKey, {
+              from: fromModule,
+              to: target.name,
+              kind: target.kind,
+              import_count: 1,
+            });
+          }
+        }
+      }
+
+      const edges = Array.from(edgeCounts.values())
+        .sort((a, b) => b.import_count - a.import_count)
+        .slice(0, input.max_edges ?? 50);
+
+      return {
+        success: true,
+        graph: {
+          nodes: Array.from(nodes).sort(),
+          edges,
+        },
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   // ==================== Helper Methods ====================
 
   /**
@@ -823,6 +883,39 @@ export class StructuredQueryEngine {
     }
 
     return { commitId: commitRecord.id, commitSha, git };
+  }
+
+  private getModuleNameForFile(filePath: string): string {
+    const parts = filePath.split('/').filter(Boolean);
+    return parts.length > 1 ? parts[0]! : filePath;
+  }
+
+  private normalizeDependencyTarget(
+    importerPath: string,
+    moduleSpecifier: string
+  ): { name: string; kind: 'internal' | 'external' } | null {
+    if (!moduleSpecifier) {
+      return null;
+    }
+
+    if (moduleSpecifier.startsWith('.') || moduleSpecifier.startsWith('/')) {
+      const normalized = moduleSpecifier.startsWith('/')
+        ? path.normalize(moduleSpecifier)
+        : path.normalize(path.join(path.dirname(importerPath), moduleSpecifier));
+      const trimmed = normalized.replace(/^\/+/, '');
+      const moduleName = this.getModuleNameForFile(trimmed);
+      return { name: moduleName, kind: 'internal' };
+    }
+
+    const packageParts = moduleSpecifier.split('/').filter(Boolean);
+    if (packageParts.length === 0) {
+      return null;
+    }
+    const name = moduleSpecifier.startsWith('@') && packageParts.length >= 2
+      ? `${packageParts[0]}/${packageParts[1]}`
+      : packageParts[0]!;
+
+    return { name, kind: 'external' };
   }
 
   /**
