@@ -38,25 +38,15 @@ npm install && npm run build
 npm link  # optional: make 'sourcerack' available globally
 ```
 
-### 2. Start Services
-
-SourceRack uses Docker Compose to run Qdrant (vector database) and the embedding service:
-
-```bash
-docker compose up -d
-```
-
-This starts:
-- **Qdrant** on `localhost:6333` - Vector storage for semantic search
-- **Embedding Service** on `localhost:8080` - Generates embeddings via fastembed
-
-### 3. Index Your Code
+### 2. Index Your Code
 
 ```bash
 sourcerack index /path/to/your/repo
 ```
 
-### 4. Search
+That's it! No Docker required. SourceRack uses SQLite for both metadata and vector storage.
+
+### 3. Search
 
 ```bash
 # Find where a symbol is defined
@@ -109,19 +99,44 @@ Configuration lives in `~/.sourcerack/config.json`:
 ```json
 {
   "embedding": {
-    "enabled": true,
-    "provider": "remote",
-    "remoteUrl": "http://127.0.0.1:8080/embed"
+    "provider": "fastembed",
+    "model": "all-MiniLM-L6-v2"
   },
-  "qdrant": {
-    "url": "http://localhost:6333"
+  "vectorStorage": {
+    "provider": "sqlite-vss"
   }
 }
 ```
 
-### SQI-Only Mode (No Docker)
+### Vector Storage Options
 
-For structural queries only (find-def, find-usages), you don't need Docker:
+**SQLite-vec (Default)** - No external dependencies:
+```json
+{
+  "vectorStorage": {
+    "provider": "sqlite-vss"
+  }
+}
+```
+
+**Qdrant (Optional)** - For larger codebases or production use:
+```json
+{
+  "vectorStorage": {
+    "provider": "qdrant",
+    "qdrant": {
+      "url": "http://localhost:6333",
+      "collection": "sourcerack"
+    }
+  }
+}
+```
+
+Start Qdrant with Docker: `docker run -p 6333:6333 qdrant/qdrant`
+
+### SQI-Only Mode
+
+For structural queries only (find-def, find-usages), disable embeddings:
 
 ```json
 {
@@ -130,8 +145,6 @@ For structural queries only (find-def, find-usages), you don't need Docker:
   }
 }
 ```
-
-This disables semantic search but keeps all symbol-based features working.
 
 ### Custom Embedding Provider
 
@@ -143,7 +156,14 @@ Body: { "texts": ["text1", "text2"] }
 Response: { "embeddings": [[...], [...]], "dimensions": 384 }
 ```
 
-Just set `remoteUrl` in your config to your endpoint.
+```json
+{
+  "embedding": {
+    "provider": "remote",
+    "remoteUrl": "http://your-server:8080/embed"
+  }
+}
+```
 
 ## Claude Code Integration
 
@@ -199,8 +219,8 @@ Want to add a language? See [CONTRIBUTING.md](./CONTRIBUTING.md) - it's ~200-400
                     ┌──────────────────────────┴──────────────────────────┐
                     ▼                                                      ▼
              ┌─────────────┐                                       ┌─────────────┐
-             │   SQLite    │                                       │   Qdrant    │
-             │    (SQI)    │                                       │  (Docker)   │
+             │   SQLite    │                                       │ SQLite-vec  │
+             │    (SQI)    │                                       │ or Qdrant   │
              └─────────────┘                                       └─────────────┘
                     │                                                      │
                     ▼                                                      ▼
@@ -209,10 +229,12 @@ Want to add a language? See [CONTRIBUTING.md](./CONTRIBUTING.md) - it's ~200-400
              hierarchy
 ```
 
+**Storage**: Everything runs locally in SQLite by default. No external services needed.
+
 ## Requirements
 
 - Node.js 20 LTS or later
-- Docker & Docker Compose (for semantic search)
+- Docker (optional, only if using Qdrant for vector storage)
 
 ## Development
 

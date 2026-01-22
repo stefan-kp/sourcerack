@@ -15,7 +15,8 @@ import {
 import { deduplicateChunks } from '../storage/dedup.js';
 import { MetadataStorage } from '../storage/metadata.js';
 import type { EmbeddingStatus } from '../storage/types.js';
-import { QdrantStorage, type ChunkPayload, type ChunkUpsert, getContentType } from '../storage/qdrant.js';
+import type { VectorStorage, ChunkPayload, ChunkUpsert } from '../storage/vector-storage.js';
+import { getContentType } from '../storage/vector-storage.js';
 import type { EmbeddingProvider } from '../embeddings/types.js';
 import type { SupportedLanguage } from '../parser/types.js';
 import {
@@ -53,7 +54,7 @@ function getLockKey(repoId: string, commitSha: string): string {
 export class Indexer {
   private git: GitAdapter;
   private metadata: MetadataStorage;
-  private vectors: QdrantStorage | null;
+  private vectors: VectorStorage | null;
   private embeddings: EmbeddingProvider | null;
   private batchSize: number;
   private sqiIndexer: SQIIndexer;
@@ -62,7 +63,7 @@ export class Indexer {
   constructor(
     git: GitAdapter,
     metadata: MetadataStorage,
-    vectors: QdrantStorage | null,
+    vectors: VectorStorage | null,
     embeddings: EmbeddingProvider | null,
     batchSize: number = 32
   ) {
@@ -664,7 +665,7 @@ export class Indexer {
 export function createIndexer(
   git: GitAdapter,
   metadata: MetadataStorage,
-  vectors: QdrantStorage | null,
+  vectors: VectorStorage | null,
   embeddings: EmbeddingProvider | null,
   batchSize?: number
 ): Indexer {

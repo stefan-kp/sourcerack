@@ -6,7 +6,7 @@
 
 import { GitAdapter } from '../../git/adapter.js';
 import { MetadataStorage } from '../../storage/metadata.js';
-import { QdrantStorage } from '../../storage/qdrant.js';
+import type { VectorStorage } from '../../storage/vector-storage.js';
 import type { EmbeddingProvider } from '../../embeddings/types.js';
 import {
   createQueryOrchestrator,
@@ -39,7 +39,7 @@ function decodeCursor(encoded: string): PaginationCursor | undefined {
 export async function handleQueryCode(
   input: QueryCodeInput,
   metadata: MetadataStorage,
-  vectors: QdrantStorage,
+  vectors: VectorStorage,
   embeddings: EmbeddingProvider
 ): Promise<QueryCodeOutput> {
   const { repo_path, commit, query, limit, cursor, language, path_pattern } =

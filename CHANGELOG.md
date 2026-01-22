@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **SQLite-vec as default vector storage** - No Docker required for semantic search
+  - Uses native kNN search with L2 distance via sqlite-vec extension
+  - Single-file database at `~/.sourcerack/vectors.db`
+  - Qdrant remains available as optional backend
+- VectorStorage abstraction layer for pluggable vector backends
+- Factory pattern for vector storage creation (`createVectorStorage()`)
 - File content cache in Indexer and IncrementalIndexer for 30-50% I/O reduction during indexing
 - Symbol importance ranking with boosts for top-level symbols, index files, and exported symbols
 - `is_exported` optional field in ChunkPayload for future ranking improvements
@@ -19,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--sqi` flag for `sourcerack index` to skip embeddings (SQI-only mode without Qdrant)
 
 ### Changed
+- **Vector storage**: SQLite-vec is now the default (previously Qdrant required Docker)
+- **Config schema**: New `vectorStorage` config section for provider selection
 - **tree-sitter**: Upgraded to `tree-sitter@0.25.0` - fixes "Invalid argument" crash with large Ruby files
 - **Dart**: Switched to `@sengac/tree-sitter-dart@1.1.6` (actively maintained)
 - **Go**: Updated to `tree-sitter-go@0.25.0`

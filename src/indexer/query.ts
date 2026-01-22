@@ -11,7 +11,7 @@
  */
 
 import { MetadataStorage } from '../storage/metadata.js';
-import { QdrantStorage, type SearchResult, type SearchFilters, type ContentType } from '../storage/qdrant.js';
+import type { VectorStorage, SearchResult, SearchFilters, ContentType } from '../storage/vector-storage.js';
 import type { EmbeddingProvider, EmbeddingVector } from '../embeddings/types.js';
 
 /**
@@ -423,13 +423,13 @@ function reRankResults(
  */
 export class QueryOrchestrator {
   private metadata: MetadataStorage;
-  private vectors: QdrantStorage;
+  private vectors: VectorStorage;
   private embeddings: EmbeddingProvider;
   private config: QueryConfig;
 
   constructor(
     metadata: MetadataStorage,
-    vectors: QdrantStorage,
+    vectors: VectorStorage,
     embeddings: EmbeddingProvider,
     config: QueryConfig = DEFAULT_QUERY_CONFIG
   ) {
@@ -686,7 +686,7 @@ export class QueryOrchestrator {
  */
 export function createQueryOrchestrator(
   metadata: MetadataStorage,
-  vectors: QdrantStorage,
+  vectors: VectorStorage,
   embeddings: EmbeddingProvider,
   config?: QueryConfig
 ): QueryOrchestrator {

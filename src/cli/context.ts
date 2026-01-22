@@ -6,7 +6,8 @@
  */
 
 import { MetadataStorage } from '../storage/metadata.js';
-import { QdrantStorage } from '../storage/qdrant.js';
+import type { VectorStorage } from '../storage/vector-storage.js';
+import { createVectorStorage, detectProviderFromConfig, getDefaultVectorDatabasePath } from '../storage/vector-factory.js';
 import { createEmbeddingProvider } from '../embeddings/provider.js';
 import { loadConfig, type LoadConfigOptions } from '../config/config.js';
 import type { EmbeddingProvider } from '../embeddings/types.js';
@@ -21,8 +22,8 @@ export interface CLIContext {
   config: SourceRackConfig;
   /** Metadata storage (SQLite) */
   metadata: MetadataStorage;
-  /** Vector storage (Qdrant) */
-  vectors: QdrantStorage;
+  /** Vector storage (SQLite-VSS or Qdrant) */
+  vectors: VectorStorage;
   /** Embedding provider */
   embeddings: EmbeddingProvider;
   /** Close all connections */
@@ -79,32 +80,51 @@ export async function createCLIContext(
   }
 
   // Initialize vector storage (unless skipped)
-  let vectors: QdrantStorage | undefined;
+  let vectors: VectorStorage | undefined;
   if (options.skipVectors !== true) {
-    const qdrantConfig: {
-      url: string;
-      collectionName: string;
-      dimensions: number;
-      apiKey?: string;
-    } = {
-      url: config.qdrant.url,
-      collectionName: config.qdrant.collection,
-      dimensions: embeddings?.dimensions ?? 384,
-    };
-    if (config.qdrant.apiKey !== undefined && config.qdrant.apiKey !== '') {
-      qdrantConfig.apiKey = config.qdrant.apiKey;
+    const provider = detectProviderFromConfig(config);
+
+    // Log deprecation warning if using legacy qdrant config
+    if (!config.vectorStorage?.provider && config.qdrant?.url && config.qdrant.url !== 'http://localhost:6333') {
+      console.warn('⚠️  Deprecation warning: Using legacy qdrant config. Please migrate to vectorStorage.provider and vectorStorage.qdrant');
     }
 
-    vectors = new QdrantStorage(qdrantConfig);
     try {
-      await vectors.initialize();
+      if (provider === 'qdrant') {
+        // Use Qdrant
+        const qdrantConfig = config.vectorStorage?.qdrant ?? config.qdrant;
+        const qdrantOptions: Parameters<typeof createVectorStorage>[0] = {
+          provider: 'qdrant',
+          dimensions: embeddings?.dimensions ?? 384,
+          qdrantUrl: qdrantConfig.url,
+          qdrantCollection: qdrantConfig.collection,
+        };
+        if (qdrantConfig.apiKey) {
+          qdrantOptions.qdrantApiKey = qdrantConfig.apiKey;
+        }
+        vectors = await createVectorStorage(qdrantOptions);
+      } else {
+        // Default: SQLite-VSS
+        vectors = await createVectorStorage({
+          provider: 'sqlite-vss',
+          dimensions: embeddings?.dimensions ?? 384,
+          databasePath: config.vectorStorage?.sqliteVss?.databasePath ?? getDefaultVectorDatabasePath(),
+        });
+      }
     } catch (error) {
       metadata.close();
-      const hint = config.qdrant.url.includes('localhost')
-        ? '\n\nHint: Start Qdrant with: npm run qdrant:start'
-        : '';
+      if (provider === 'qdrant') {
+        const url = config.vectorStorage?.qdrant?.url ?? config.qdrant.url;
+        const hint = url.includes('localhost')
+          ? '\n\nHint: Start Qdrant with: npm run qdrant:start'
+          : '';
+        throw new ConnectionError(
+          `Failed to connect to Qdrant at ${url}${hint}`,
+          error instanceof Error ? error : undefined
+        );
+      }
       throw new ConnectionError(
-        `Failed to connect to Qdrant at ${config.qdrant.url}${hint}`,
+        `Failed to initialize vector storage: ${error instanceof Error ? error.message : String(error)}`,
         error instanceof Error ? error : undefined
       );
     }
@@ -117,13 +137,13 @@ export async function createCLIContext(
   const context: CLIContext = {
     config,
     metadata,
-    vectors: vectors as unknown as QdrantStorage,
+    vectors: vectors as unknown as VectorStorage,
     embeddings: embeddings as unknown as EmbeddingProvider,
-    close(): Promise<void> {
+    async close(): Promise<void> {
       metadata.close();
-      // QdrantStorage doesn't have a close method currently
-      // If it gets one in the future, call it here
-      return Promise.resolve();
+      if (vectors) {
+        await vectors.close();
+      }
     },
   };
 

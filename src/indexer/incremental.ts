@@ -17,7 +17,8 @@ import {
 } from '../parser/tree-sitter.js';
 import { deduplicateChunks } from '../storage/dedup.js';
 import { MetadataStorage } from '../storage/metadata.js';
-import { QdrantStorage, type ChunkPayload, type ChunkUpsert } from '../storage/qdrant.js';
+import type { VectorStorage, ChunkPayload, ChunkUpsert } from '../storage/vector-storage.js';
+import { getContentType } from '../storage/vector-storage.js';
 import type { EmbeddingProvider } from '../embeddings/types.js';
 import type { EmbeddingStatus } from '../storage/types.js';
 import type { SupportedLanguage } from '../parser/types.js';
@@ -52,7 +53,7 @@ function getLockKey(repoId: string, commitSha: string): string {
 export class IncrementalIndexer {
   private git: GitAdapter;
   private metadata: MetadataStorage;
-  private vectors: QdrantStorage | null;
+  private vectors: VectorStorage | null;
   private embeddings: EmbeddingProvider | null;
   private batchSize: number;
   private repoPath: string;
@@ -63,7 +64,7 @@ export class IncrementalIndexer {
     repoPath: string,
     git: GitAdapter,
     metadata: MetadataStorage,
-    vectors: QdrantStorage | null,
+    vectors: VectorStorage | null,
     embeddings: EmbeddingProvider | null,
     batchSize: number = 32
   ) {
@@ -636,6 +637,7 @@ export class IncrementalIndexer {
         symbol: pc.chunk.symbol,
         symbol_type: pc.chunk.symbolType,
         language: pc.chunk.language,
+        content_type: getContentType(pc.chunk.path, pc.chunk.language),
         start_line: pc.chunk.startLine,
         end_line: pc.chunk.endLine,
         content: pc.chunk.content,
@@ -667,7 +669,7 @@ export function createIncrementalIndexer(
   repoPath: string,
   git: GitAdapter,
   metadata: MetadataStorage,
-  vectors: QdrantStorage | null,
+  vectors: VectorStorage | null,
   embeddings: EmbeddingProvider | null,
   batchSize?: number
 ): IncrementalIndexer {

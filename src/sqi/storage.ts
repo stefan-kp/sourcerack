@@ -495,7 +495,7 @@ export class SQIStorage {
     } = {}
   ): {
     exact: UsageRecord[];
-    fuzzy: Array<{ symbolName: string; similarity: number; usages: UsageRecord[] }>;
+    fuzzy: { symbolName: string; similarity: number; usages: UsageRecord[] }[];
   } {
     const { filePath, minSimilarity = 0.3, fuzzyLimit = 5 } = options;
 
@@ -553,13 +553,13 @@ export class SQIStorage {
       fuzzyLimit * 2, // Get more to account for filtering
     ];
 
-    const similarNames = this.db.prepare(query).all(...params) as Array<{
+    const similarNames = this.db.prepare(query).all(...params) as {
       name: string;
       similarity: number;
-    }>;
+    }[];
 
     // For each similar symbol name, find its usages
-    const fuzzy: Array<{ symbolName: string; similarity: number; usages: UsageRecord[] }> = [];
+    const fuzzy: { symbolName: string; similarity: number; usages: UsageRecord[] }[] = [];
 
     for (const match of similarNames) {
       const usages = this.findUsagesByName(commitId, match.name, filePath);
@@ -1321,7 +1321,7 @@ export class SQIStorage {
       limit?: number;
       kind?: SymbolKind;
     } = {}
-  ): Array<{ symbol: SymbolRecord; similarity: number; isExact: boolean }> {
+  ): { symbol: SymbolRecord; similarity: number; isExact: boolean }[] {
     const { minSimilarity = 0.3, limit = 20, kind } = options;
     
     // Generate trigrams for search term
@@ -1404,7 +1404,7 @@ export class SQIStorage {
     } = {}
   ): {
     exact: SymbolRecord[];
-    fuzzy: Array<{ symbol: SymbolRecord; similarity: number }>;
+    fuzzy: { symbol: SymbolRecord; similarity: number }[];
   } {
     const { kind, minSimilarity = 0.3, fuzzyLimit = 10 } = options;
     

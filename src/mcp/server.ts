@@ -13,7 +13,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { MetadataStorage } from '../storage/metadata.js';
-import { QdrantStorage } from '../storage/qdrant.js';
+import type { VectorStorage } from '../storage/vector-storage.js';
+import { createVectorStorage, detectProviderFromConfig, getDefaultVectorDatabasePath } from '../storage/vector-factory.js';
 import { createEmbeddingProvider } from '../embeddings/provider.js';
 import { loadConfig } from '../config/config.js';
 
@@ -274,21 +275,6 @@ export async function createMCPServer(): Promise<Server> {
   // Initialize storage components
   const metadata = MetadataStorage.create(config.storage.databasePath);
 
-  // Build Qdrant config carefully to avoid undefined issues
-  const qdrantConfig: {
-    url: string;
-    collectionName: string;
-    dimensions: number;
-    apiKey?: string;
-  } = {
-    url: config.qdrant.url,
-    collectionName: config.qdrant.collection,
-    dimensions: 384, // Default, will be overridden by embedding provider
-  };
-  if (config.qdrant.apiKey) {
-    qdrantConfig.apiKey = config.qdrant.apiKey;
-  }
-
   // Create embedding provider first to get dimensions
   const embeddingConfig: {
     provider: 'fastembed' | 'remote';
@@ -310,11 +296,29 @@ export async function createMCPServer(): Promise<Server> {
 
   const embeddings = await createEmbeddingProvider(embeddingConfig);
 
-  // Update qdrant config with correct dimensions from embeddings
-  qdrantConfig.dimensions = embeddings.dimensions;
+  // Detect provider and create vector storage
+  const provider = detectProviderFromConfig(config);
+  let vectors: VectorStorage;
 
-  const vectors = new QdrantStorage(qdrantConfig);
-  await vectors.initialize();
+  if (provider === 'qdrant') {
+    const qdrantConfig = config.vectorStorage?.qdrant ?? config.qdrant;
+    const qdrantOptions: Parameters<typeof createVectorStorage>[0] = {
+      provider: 'qdrant',
+      dimensions: embeddings.dimensions,
+      qdrantUrl: qdrantConfig.url,
+      qdrantCollection: qdrantConfig.collection,
+    };
+    if (qdrantConfig.apiKey) {
+      qdrantOptions.qdrantApiKey = qdrantConfig.apiKey;
+    }
+    vectors = await createVectorStorage(qdrantOptions);
+  } else {
+    vectors = await createVectorStorage({
+      provider: 'sqlite-vss',
+      dimensions: embeddings.dimensions,
+      databasePath: config.vectorStorage?.sqliteVss?.databasePath ?? getDefaultVectorDatabasePath(),
+    });
+  }
 
   // Create MCP server
   const server = new Server(

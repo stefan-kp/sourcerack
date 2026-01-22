@@ -808,7 +808,7 @@ export class DartExtractor extends SymbolExtractor {
       prevSibling = prevSibling.previousNamedSibling;
     }
 
-    if (prevSibling && prevSibling.type === 'documentation_comment') {
+    if (prevSibling?.type === 'documentation_comment') {
       const rawText = prevSibling.text;
       const description = this.cleanDocComment(rawText);
 
@@ -820,7 +820,7 @@ export class DartExtractor extends SymbolExtractor {
     }
 
     // Also check for comment node
-    if (prevSibling && prevSibling.type === 'comment') {
+    if (prevSibling?.type === 'comment') {
       const text = prevSibling.text;
       if (text.startsWith('///') || text.startsWith('/**')) {
         return {

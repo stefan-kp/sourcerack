@@ -4,11 +4,34 @@
  * Provides vector storage and semantic search capabilities.
  * Dimensions are derived from the embedding provider configuration,
  * not hardcoded.
+ *
+ * This is an optional backend - requires Docker/Qdrant server.
  */
 
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { minimatch } from 'minimatch';
 import type { EmbeddingVector } from '../embeddings/types.js';
+import {
+  type VectorStorage,
+  type ChunkPayload,
+  type SearchResult,
+  type SearchFilters,
+  type ChunkUpsert,
+  VectorStorageError,
+  VectorStorageErrorCode,
+} from './vector-storage.js';
+
+// Re-export types for backward compatibility
+export {
+  type ChunkPayload,
+  type SearchResult,
+  type SearchFilters,
+  type ChunkUpsert,
+  type ContentType,
+  getContentType,
+  VectorStorageError,
+  VectorStorageErrorCode,
+} from './vector-storage.js';
 
 /**
  * Simple LRU Cache implementation for chunk existence checks
@@ -63,113 +86,6 @@ class LRUCache<K, V> {
 }
 
 /**
- * Content type for filtering
- */
-export type ContentType = 'code' | 'docs' | 'config';
-
-/**
- * Determine content type from file path and language
- */
-export function getContentType(filePath: string, language: string): ContentType {
-  const lowerPath = filePath.toLowerCase();
-  const ext = lowerPath.split('.').pop() ?? '';
-
-  // Documentation files
-  if (
-    ext === 'md' ||
-    ext === 'markdown' ||
-    ext === 'rst' ||
-    ext === 'txt' ||
-    ext === 'adoc' ||
-    language === 'markdown'
-  ) {
-    return 'docs';
-  }
-
-  // Configuration files
-  if (
-    ext === 'json' ||
-    ext === 'yaml' ||
-    ext === 'yml' ||
-    ext === 'toml' ||
-    ext === 'ini' ||
-    ext === 'xml' ||
-    ext === 'env' ||
-    language === 'json' ||
-    language === 'yaml' ||
-    language === 'toml' ||
-    lowerPath.includes('config') ||
-    lowerPath.includes('.rc') ||
-    lowerPath.endsWith('rc')
-  ) {
-    return 'config';
-  }
-
-  // Everything else is code
-  return 'code';
-}
-
-/**
- * Chunk payload stored alongside vectors in Qdrant
- */
-export interface ChunkPayload {
-  /** Repository ID (UUID) */
-  repo_id: string;
-  /** Commit SHAs this chunk belongs to */
-  commits: string[];
-  /** Branch names (for reference, derived from commits) */
-  branches: string[];
-  /** File path within repository */
-  path: string;
-  /** Symbol name (function, class, etc.) */
-  symbol: string;
-  /** Symbol type */
-  symbol_type: string;
-  /** Programming language */
-  language: string;
-  /** Content type for filtering (code, docs, config) */
-  content_type: ContentType;
-  /** Start line number */
-  start_line: number;
-  /** End line number */
-  end_line: number;
-  /** Source code content */
-  content: string;
-  /** Whether the symbol is exported (optional, for ranking) */
-  is_exported?: boolean;
-}
-
-/**
- * Search result from Qdrant
- */
-export interface SearchResult {
-  /** Chunk ID (content-addressed hash) */
-  id: string;
-  /** Relevance score (0-1, higher is better) */
-  score: number;
-  /** Chunk payload */
-  payload: ChunkPayload;
-}
-
-/**
- * Search filters for commit-scoped queries
- */
-export interface SearchFilters {
-  /** Repository ID (required) */
-  repo_id: string;
-  /** Commit SHA (required) */
-  commit: string;
-  /** Optional language filter */
-  language?: string;
-  /** Optional path pattern filter (glob-like) */
-  pathPattern?: string;
-  /** Optional content type filter (default: 'code') */
-  contentType?: ContentType | ContentType[];
-  /** Include all content types (overrides contentType filter) */
-  includeAllContentTypes?: boolean;
-}
-
-/**
  * Qdrant connection configuration
  */
 export interface QdrantConfig {
@@ -184,33 +100,31 @@ export interface QdrantConfig {
 }
 
 /**
- * Chunk to upsert into Qdrant
+ * Qdrant storage error (deprecated, use VectorStorageError)
+ * @deprecated Use VectorStorageError instead
  */
-export interface ChunkUpsert {
-  /** Chunk ID (content-addressed hash) */
-  id: string;
-  /** Embedding vector */
-  vector: EmbeddingVector;
-  /** Chunk payload */
-  payload: ChunkPayload;
-}
-
-/**
- * Qdrant storage error
- */
-export class QdrantStorageError extends Error {
+export class QdrantStorageError extends VectorStorageError {
   constructor(
     message: string,
-    public readonly code: QdrantErrorCode,
-    public readonly cause?: Error
+    code: QdrantErrorCode,
+    cause?: Error
   ) {
-    super(message);
+    // Map old codes to new codes
+    const mappedCode = {
+      [QdrantErrorCode.CONNECTION_FAILED]: VectorStorageErrorCode.CONNECTION_FAILED,
+      [QdrantErrorCode.COLLECTION_ERROR]: VectorStorageErrorCode.COLLECTION_ERROR,
+      [QdrantErrorCode.UPSERT_FAILED]: VectorStorageErrorCode.UPSERT_FAILED,
+      [QdrantErrorCode.SEARCH_FAILED]: VectorStorageErrorCode.SEARCH_FAILED,
+      [QdrantErrorCode.INVALID_CONFIG]: VectorStorageErrorCode.INVALID_CONFIG,
+    }[code];
+    super(message, mappedCode, cause);
     this.name = 'QdrantStorageError';
   }
 }
 
 /**
- * Qdrant error codes
+ * Qdrant error codes (deprecated, use VectorStorageErrorCode)
+ * @deprecated Use VectorStorageErrorCode instead
  */
 export enum QdrantErrorCode {
   /** Connection failed */
@@ -227,8 +141,10 @@ export enum QdrantErrorCode {
 
 /**
  * Qdrant vector store client
+ *
+ * Implements VectorStorage interface for Qdrant backend.
  */
-export class QdrantStorage {
+export class QdrantStorage implements VectorStorage {
   private client: QdrantClient;
   private collectionName: string;
   private dimensions: number;

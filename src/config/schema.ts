@@ -8,6 +8,18 @@ import { z } from 'zod';
 import { getDefaultDatabasePath } from './paths.js';
 
 /**
+ * Vector storage provider enum
+ */
+export const VectorProviderSchema = z.enum(['sqlite-vss', 'qdrant']);
+
+/**
+ * SQLite-VSS configuration
+ */
+export const SqliteVssConfigSchema = z.object({
+  databasePath: z.string().optional(), // Default: ~/.sourcerack/vectors.db
+});
+
+/**
  * Qdrant vector database configuration
  */
 export const QdrantConfigSchema = z.object({
@@ -15,6 +27,19 @@ export const QdrantConfigSchema = z.object({
   collection: z.string().min(1).default('sourcerack'),
   apiKey: z.string().optional(),
 });
+
+/**
+ * Vector storage configuration
+ *
+ * Supports multiple backends:
+ * - sqlite-vss (default): Single-file SQLite database, no Docker required
+ * - qdrant: Qdrant vector database server
+ */
+export const VectorStorageConfigSchema = z.object({
+  provider: VectorProviderSchema.default('sqlite-vss'),
+  sqliteVss: SqliteVssConfigSchema.default({}),
+  qdrant: QdrantConfigSchema.optional(),
+}).default({});
 
 /**
  * Embedding provider configuration
@@ -96,7 +121,8 @@ export const StorageConfigSchema = z.object({
  * Complete SourceRack configuration schema
  */
 export const SourceRackConfigSchema = z.object({
-  qdrant: QdrantConfigSchema.default({}),
+  vectorStorage: VectorStorageConfigSchema, // NEW: Vector storage configuration
+  qdrant: QdrantConfigSchema.default({}), // DEPRECATED: Use vectorStorage.qdrant instead
   embedding: EmbeddingConfigSchema.default({}),
   indexing: IndexingConfigSchema.default({}),
   query: QueryConfigSchema.default({}),
@@ -108,7 +134,10 @@ export const SourceRackConfigSchema = z.object({
 /**
  * TypeScript types derived from schemas
  */
+export type VectorProvider = z.infer<typeof VectorProviderSchema>;
+export type SqliteVssConfig = z.infer<typeof SqliteVssConfigSchema>;
 export type QdrantConfig = z.infer<typeof QdrantConfigSchema>;
+export type VectorStorageConfig = z.infer<typeof VectorStorageConfigSchema>;
 export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export type IndexingConfig = z.infer<typeof IndexingConfigSchema>;
 export type QueryConfig = z.infer<typeof QueryConfigSchema>;

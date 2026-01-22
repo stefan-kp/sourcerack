@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { GitAdapter } from '../../git/adapter.js';
 import { MetadataStorage } from '../../storage/metadata.js';
-import { QdrantStorage } from '../../storage/qdrant.js';
+import type { VectorStorage } from '../../storage/vector-storage.js';
 import type { EmbeddingProvider } from '../../embeddings/types.js';
 import { createIndexer } from '../../indexer/indexer.js';
 import type { IndexCodebaseInput, IndexCodebaseOutput } from '../types.js';
@@ -18,7 +18,7 @@ import type { IndexCodebaseInput, IndexCodebaseOutput } from '../types.js';
 export async function handleIndexCodebase(
   input: IndexCodebaseInput,
   metadata: MetadataStorage,
-  vectors: QdrantStorage,
+  vectors: VectorStorage,
   embeddings: EmbeddingProvider
 ): Promise<IndexCodebaseOutput> {
   const { repo_path, commit, branch } = input;
