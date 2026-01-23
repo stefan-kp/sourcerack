@@ -69,6 +69,10 @@ sourcerack query "error handling in API routes"
 | `sourcerack find-def <symbol>` | Find symbol definition |
 | `sourcerack find-usages <symbol>` | Find all usages of a symbol |
 | `sourcerack hierarchy <symbol>` | Show class inheritance tree |
+| `sourcerack dependencies <file>` | Show file imports |
+| `sourcerack dependents <module>` | Show who imports a module |
+| `sourcerack impact <symbol>` | Analyze change impact |
+| `sourcerack dead-code` | Find unused code |
 | `sourcerack query <search>` | Semantic search |
 | `sourcerack status` | Show index status |
 | `sourcerack repos` | List indexed repositories |
@@ -90,6 +94,28 @@ sourcerack hierarchy BaseExtractor
 
 # JSON output for scripting
 sourcerack find-def MyClass --json
+
+# Multi-repo search (filter by name)
+sourcerack find-def UserService --repos my-app my-lib
+sourcerack find-usages authenticate --all-repos
+```
+
+### Multi-Repository Search
+
+Search across multiple indexed repositories:
+
+```bash
+# Search all indexed repos
+sourcerack find-def MyClass --all-repos
+
+# Search specific repos by name
+sourcerack find-usages handleError --repos frontend backend
+
+# Analyze impact across projects
+sourcerack impact SharedUtil --all-repos
+
+# Find dead code across repos
+sourcerack dead-code --repos "app-a,app-b"
 ```
 
 ## Configuration

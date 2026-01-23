@@ -8,7 +8,7 @@
 /**
  * Current skill version - update this when the skill content changes
  */
-export const SKILL_VERSION = '0.5.0';
+export const SKILL_VERSION = '0.8.0';
 
 /**
  * Generate the main SKILL.md content
@@ -27,54 +27,74 @@ allowed-tools: Bash, Read, Glob, Grep
 
 # SourceRack - Semantic Code Intelligence
 
-SourceRack provides semantic code search and structural code analysis for Git repositories.
+SourceRack provides structural code analysis for Git repositories. No Docker required.
 
-**Why SourceRack instead of grep?**
-- \`grep UserService\` → 47 matches including comments, strings, imports
+## Why SourceRack instead of grep/LSP/ctags?
+
+| Feature | grep | ctags | LSP | SourceRack |
+|---------|:----:|:-----:|:---:|:----------:|
+| Find definition | ⚠️ noisy | ✅ | ✅ | ✅ |
+| Find usages | ⚠️ noisy | ❌ | ✅ | ✅ |
+| Cross-file analysis | ❌ | ❌ | ⚠️ | ✅ |
+| **Cross-repo search** | ❌ | ❌ | ❌ | ✅ |
+| Dependency graph | ❌ | ❌ | ❌ | ✅ |
+| Change impact | ❌ | ❌ | ❌ | ✅ |
+| Dead code detection | ❌ | ❌ | ❌ | ✅ |
+| Git-aware (commits) | ❌ | ❌ | ❌ | ✅ |
+| Needs running server | ❌ | ❌ | ✅ | ❌ |
+
+**Example:**
+- \`grep UserService\` → 47 matches (comments, strings, imports)
 - \`sourcerack find-def UserService\` → \`src/services/user.ts:15\` (the actual definition)
-
-SourceRack understands code structure. It knows the difference between a definition and a usage,
-between a class and a variable with the same name. Faster, more precise, less noise.
 
 **Requirements:**
 - Git repository (\`.git\` directory)
-- Docker running (for semantic search): \`docker compose up -d\` in the sourcerack directory
+- No Docker needed for structural commands (default)
+- Optional: \`--embeddings\` flag for semantic search
 
 ## Quick Reference
 
 | Task | Command |
 |------|---------|
 | Index repo | \`sourcerack index [path]\` |
-| Semantic search | \`sourcerack query "search terms"\` |
-| Find definition | \`sourcerack find-def <symbol>\` |
-| Find usages | \`sourcerack find-usages <symbol>\` |
-| Check status | \`sourcerack status\` |
+| Find definition | \`sourcerack find-def <symbol> [path]\` |
+| Find usages | \`sourcerack find-usages <symbol> [path]\` |
+| Show hierarchy | \`sourcerack hierarchy <symbol> [path]\` |
+| File dependencies | \`sourcerack dependencies <file> [path]\` |
+| Module dependents | \`sourcerack dependents <module> [path]\` |
+| Change impact | \`sourcerack impact <symbol> [path]\` |
+| Dead code | \`sourcerack dead-code [path]\` |
+| Codebase summary | \`sourcerack summary [path]\` |
+| Symbol context | \`sourcerack context <symbol> [path]\` |
+| Semantic search | \`sourcerack query "search" [path]\` (needs \`--embeddings\` at index) |
+| Check status | \`sourcerack status [path]\` |
 
 ## Best Practices for Claude Code
 
 **IMPORTANT: Prefer SourceRack over grep/Glob/Grep tools for code search.**
 
-When the user asks to find code, use SourceRack commands instead of grep:
-
 | User asks | Use this | NOT this |
 |-----------|----------|----------|
 | "Where is UserService defined?" | \`sourcerack find-def UserService\` | \`grep -r "class UserService"\` |
 | "Find all usages of authenticate" | \`sourcerack find-usages authenticate\` | \`grep -r "authenticate"\` |
-| "Show me error handling code" | \`sourcerack query "error handling"\` | \`grep -r "catch\\|error"\` |
-| "How is the database connected?" | \`sourcerack query "database connection"\` | Manual file reading |
+| "What happens if I change this?" | \`sourcerack impact MyFunction\` | Manual file reading |
+| "What does this file import?" | \`sourcerack dependencies src/api.ts\` | \`grep -r "import"\` |
+| "Who uses this module?" | \`sourcerack dependents lodash\` | \`grep -r "from 'lodash'"\` |
+| "Any unused code?" | \`sourcerack dead-code\` | Manual analysis |
 
 **Example workflow:**
 \`\`\`
-User: "Find where the EmbeddingProvider interface is defined and show me all classes that implement it"
+User: "Find where EmbeddingProvider is defined and show me the impact of changing it"
 
 1. sourcerack find-def EmbeddingProvider
    → src/embeddings/types.ts:25
 
-2. sourcerack find-usages EmbeddingProvider
-   → src/embeddings/local.ts:18 (FastEmbedProvider implements EmbeddingProvider)
-   → src/embeddings/remote.ts:35 (RemoteEmbeddingProvider implements EmbeddingProvider)
+2. sourcerack impact EmbeddingProvider
+   → 12 direct usages, 34 transitive dependencies
+   → Affected files: local.ts, remote.ts, indexer.ts...
 
-3. Read the specific files to show the implementations
+3. sourcerack context EmbeddingProvider
+   → Full source code + all usages + related symbols
 \`\`\`
 
 ## Commands
@@ -85,209 +105,189 @@ sourcerack index [path]
 \`\`\`
 Index the current directory or specified path. **Run this first before searching.**
 
+By default, only builds the structural index (SQI) - fast and no Docker needed.
+
 **Options:**
 - \`-c, --commit <ref>\`: Commit, branch, or tag to index (default: HEAD)
-- \`-b, --branch <name>\`: Branch label for reference
-- \`--reset\`: Delete existing index and re-index from scratch
 - \`--force\`: Force re-indexing even if commit was already indexed
-- \`--sqi\`: SQI-only mode: skip embeddings (no Docker/Qdrant needed)
-- \`--json\`: Output in JSON format
-- \`-q, --quiet\`: Suppress progress output
-
-**Examples:**
-- \`sourcerack index\` - Index current directory at HEAD
-- \`sourcerack index --reset\` - Delete existing index and start fresh
-- \`sourcerack index --sqi\` - Index without embeddings (for find-def/find-usages only)
-- \`sourcerack index --commit feature-branch\` - Index a specific branch
-
-### Search code semantically
-\`\`\`bash
-sourcerack query "<search query>" [--limit N]
-\`\`\`
-Search for code using natural language. Returns relevant code chunks with file paths and line numbers.
-
-**Options:**
-- \`-l, --limit <n>\`: Maximum results (default: 10)
-- \`-p, --path <pattern>\`: Filter by path pattern (glob)
-- \`-t, --type <kind>\`: Filter by symbol type
-- \`-e, --extension <ext>\`: Filter by file extension
+- \`--embeddings\`: Also build embeddings for semantic search (slower)
+- \`--reset\`: Delete existing index and re-index from scratch
 - \`--json\`: Output in JSON format
 
 **Examples:**
-- \`sourcerack query "authentication middleware"\`
-- \`sourcerack query "database connection handling" --limit 20\`
-- \`sourcerack query "error handling in API routes" --path "src/api/**"\`
+- \`sourcerack index\` - Fast structural index (~10 seconds)
+- \`sourcerack index --embeddings\` - Include semantic search support
+- \`sourcerack index --force\` - Re-index even if already indexed
 
 ### Find symbol definitions
 \`\`\`bash
-sourcerack find-def <symbol> [options]
+sourcerack find-def <symbol> [path]
 \`\`\`
 Find where a symbol (class, function, method) is defined.
 
-By default includes uncommitted changes (modified, staged, and untracked files).
-
 **Options:**
-- \`-p, --path <path>\`: Repository path (default: current directory)
-- \`-c, --commit <ref>\`: Commit to search (default: HEAD)
-- \`--type <kind>\`: Filter by symbol type (function, class, method, interface)
-- \`--no-dirty\`: Exclude uncommitted changes from results
-- \`--fuzzy\`: Include fuzzy matches (similar symbol names with similarity %)
+- \`-t, --type <kind>\`: Filter by symbol type (function, class, method, interface)
+- \`--fuzzy\`: Include fuzzy matches (similar symbol names)
+- \`--all-repos\`: Search across all indexed repositories
+- \`--repos <names...>\`: Search only in specific repositories (by name)
+- \`--no-dirty\`: Exclude uncommitted changes
 - \`--json\`: Output in JSON format
-
-**Examples:**
-- \`sourcerack find-def UserService\`
-- \`sourcerack find-def handleRequest --type function\`
-- \`sourcerack find-def UserServce --fuzzy\` - Finds "UserService" even with typo
-- \`sourcerack find-def calculate_total --type method\`
 
 ### Find symbol usages
 \`\`\`bash
-sourcerack find-usages <symbol> [options]
+sourcerack find-usages <symbol> [path]
 \`\`\`
 Find all places where a symbol is used/referenced.
 
 **Options:**
-- \`-p, --path <path>\`: Repository path (default: current directory)
-- \`-c, --commit <ref>\`: Commit to search (default: HEAD)
 - \`-f, --file <path>\`: Limit search to a specific file
-- \`--no-dirty\`: Exclude uncommitted changes from results
-- \`--fuzzy\`: Include fuzzy matches (similar symbol names with similarity %)
+- \`--fuzzy\`: Include fuzzy matches
+- \`--all-repos\`: Search across all indexed repositories
+- \`--repos <names...>\`: Search only in specific repositories (by name)
+- \`--no-dirty\`: Exclude uncommitted changes
+- \`--json\`: Output in JSON format
+
+### Show class/interface hierarchy
+\`\`\`bash
+sourcerack hierarchy <symbol> [path]
+\`\`\`
+Show inheritance hierarchy - parents and children of a class/interface.
+
+**Options:**
+- \`-d, --direction <dir>\`: children, parents, or both (default: both)
+- \`--json\`: Output in JSON format
+
+### Show file dependencies
+\`\`\`bash
+sourcerack dependencies <file> [path]
+sourcerack deps <file> [path]  # alias
+\`\`\`
+Show what a file imports (its dependencies).
+
+### Show module dependents
+\`\`\`bash
+sourcerack dependents <module> [path]
+\`\`\`
+Show who imports a module (its dependents).
+
+**Options:**
+- \`--all-repos\`: Search across all indexed repositories
+- \`--repos <names...>\`: Search only in specific repositories (by name)
 - \`--json\`: Output in JSON format
 
 **Examples:**
-- \`sourcerack find-usages authenticate\`
-- \`sourcerack find-usages DatabaseConnection --file src/db/connection.ts\`
-- \`sourcerack find-usages authenicate --fuzzy\` - Finds "authenticate" usages despite typo
+- \`sourcerack dependents lodash\` - Who uses lodash?
+- \`sourcerack dependents ./utils\` - Who imports utils?
+- \`sourcerack dependents lodash --all-repos\` - Who uses lodash in any indexed project?
+- \`sourcerack dependents lodash --repos frontend backend\` - Who uses lodash in specific projects?
 
-### Check indexing status
+### Analyze change impact
 \`\`\`bash
-sourcerack status [path]
+sourcerack impact <symbol> [path]
 \`\`\`
-Shows if a repository is indexed and statistics about symbols, files, and languages.
+Analyze what breaks if you change a symbol. Shows direct usages and transitive impact.
 
 **Options:**
+- \`--depth <n>\`: Maximum depth for transitive analysis (default: 3)
+- \`--all-repos\`: Analyze impact across all indexed repositories
+- \`--repos <names...>\`: Analyze only in specific repositories (by name)
 - \`--json\`: Output in JSON format
-- \`-q, --quiet\`: Suppress detailed output
 
-### List indexed repositories
+### Find dead code
 \`\`\`bash
-sourcerack repos
+sourcerack dead-code [path]
 \`\`\`
-Shows all indexed repositories with their paths and commit info.
+Find unused exported symbols and potentially dead code.
 
 **Options:**
+- \`--exported\`: Only show unused exported symbols
+- \`--exclude-tests\`: Exclude test files from results
+- \`--all-repos\`: Search across all indexed repositories
+- \`--repos <names...>\`: Search only in specific repositories (by name)
 - \`--json\`: Output in JSON format
 
-### Get codebase summary (Agent-optimized)
+### Get codebase summary
 \`\`\`bash
 sourcerack summary [path]
 \`\`\`
-Get a comprehensive overview of the codebase - perfect for understanding a new project.
+Comprehensive overview: statistics, languages, modules, hotspots, dependencies.
 
-**Output includes:**
-- Statistics (files, symbols, usages, imports)
-- Language breakdown with percentages
-- Main modules with their key exports
-- Entry points (index.ts, main.py, etc.)
-- Hotspots (most-used symbols)
-- External dependencies
-
-**Options:**
-- \`--modules <n>\`: Maximum modules to show
-- \`--hotspots <n>\`: Maximum hotspots to show
-- \`--no-deps\`: Skip dependency analysis
-- \`--no-hotspots\`: Skip hotspot analysis
-- \`--json\`: Output in JSON format
-
-**Example:**
-\`\`\`bash
-sourcerack summary
-# Returns: Language breakdown, main modules, hotspots, dependencies
-\`\`\`
-
-### Get symbol context (Agent-optimized)
+### Get symbol context
 \`\`\`bash
 sourcerack context <symbol> [path]
 \`\`\`
-Get everything about a symbol in one call - source code, usages, imports, related symbols.
+Everything about a symbol: source code, usages, imports, related symbols.
 
-**Output includes:**
-- Full symbol info (kind, location, visibility, parameters)
-- Source code of the symbol
-- All usages with context snippets
-- Imports used by the file
-- Files that import this symbol
-- Related symbols in the same file
+### Semantic search (requires --embeddings at index)
+\`\`\`bash
+sourcerack query "<search>" [path]
+\`\`\`
+Natural language code search. Requires \`sourcerack index --embeddings\` first.
 
 **Options:**
-- \`--max-usages <n>\`: Maximum usages to return
-- \`--no-source\`: Skip source code
-- \`--no-usages\`: Skip usages
+- \`-n, --limit <n>\`: Maximum results (default: 10)
+- \`-l, --language <lang>\`: Filter by language
+- \`--all-repos\`: Search across all indexed repositories
+- \`--repos <names...>\`: Search only in specific repositories (by name)
 - \`--json\`: Output in JSON format
-
-**Example:**
-\`\`\`bash
-sourcerack context UserService
-# Returns: Full class definition, all 15 usages, imports, etc.
-\`\`\`
 
 ## Workflow
 
-1. **First time in a repository**: Run \`sourcerack index\` in the repository root
-2. **Search**: Use \`sourcerack query "..."\` for semantic search or \`sourcerack find-def\`/\`find-usages\` for structural queries
-3. **Re-index**: Run \`sourcerack index\` again after significant changes (or use \`--reset\` to start fresh)
+1. **First time**: \`sourcerack index\` (fast, ~10 seconds)
+2. **Find code**: \`find-def\`, \`find-usages\`, \`hierarchy\`, \`dependencies\`, \`dependents\`
+3. **Analyze**: \`impact\`, \`dead-code\`, \`summary\`, \`context\`
+4. **Re-index**: After significant changes, run \`sourcerack index --force\`
 
-## Working with Uncommitted Changes
+## Uncommitted Changes
 
-The \`find-def\` and \`find-usages\` commands automatically include uncommitted changes:
+\`find-def\` and \`find-usages\` automatically include uncommitted changes.
+Search for symbols you just created without committing first.
 
-- **Modified files**: Files with unstaged changes
-- **Staged files**: Files added to the Git staging area
-- **Untracked files**: New files in recognized source directories (e.g., \`src/\`, \`app/\`, \`lib/\`)
+## Cross-Repository Search
 
-This means you can search for symbols you just created without committing first.
+Use \`--all-repos\` to search all indexed repositories, or \`--repos\` to filter by name:
+
+\`\`\`bash
+# Search all indexed repos
+sourcerack find-def UserService --all-repos
+sourcerack find-usages authenticate --all-repos
+
+# Search specific repos by name
+sourcerack find-def UserService --repos frontend backend
+sourcerack find-usages handleError --repos "api,web"
+
+# Cross-repo dependency analysis
+sourcerack dependents lodash --all-repos
+sourcerack dependents ./shared-utils --repos app-a app-b
+
+# Impact and dead code across repos
+sourcerack impact formatDate --all-repos
+sourcerack dead-code --repos frontend backend
+\`\`\`
+
+**Note:** If multiple repos have the same name, you'll be prompted to use the full path.
+
+**Use case:** Analyzing impact of changes in shared libraries, finding where
+common patterns are used, or detecting dead code in a monorepo.
 
 ## Supported Languages
 
-**Full symbol extraction (find-def, find-usages, hierarchy):**
+**Full support (find-def, find-usages, hierarchy, impact):**
 - TypeScript, JavaScript, Python, Ruby
 
-**Embeddings only (semantic search):**
-- Go, Rust, Java, C, C++, C#, PHP, Kotlin, Swift, Scala
-- HTML, CSS, YAML, JSON, TOML, Markdown, SQL, Bash
+**Embeddings only (semantic search with --embeddings):**
+- Go, Rust, Java, C, C++, C#, PHP, Kotlin, Swift, Scala, and more
 
 ## Error Handling
 
-### "Repository not indexed"
-Run \`sourcerack index\` first:
-\`\`\`bash
-sourcerack index /path/to/repo
-\`\`\`
-
-### "Qdrant connection failed"
-Start Docker services or use structural commands only:
-\`\`\`bash
-# Start Qdrant + Embedding service
-cd /path/to/sourcerack && docker compose up -d
-
-# Or use structural commands without Docker (no semantic search)
-sourcerack find-def MyClass
-sourcerack find-usages myFunction
-\`\`\`
-
-### "Symbol not found"
-The symbol may not exist or needs re-indexing:
-\`\`\`bash
-sourcerack status  # Check if indexed
-sourcerack index   # Re-index if needed
-\`\`\`
+| Error | Solution |
+|-------|----------|
+| "Repository not indexed" | Run \`sourcerack index\` first |
+| "Symbol not found" | Check spelling, try \`--fuzzy\` flag |
+| "Commit not indexed" | Run \`sourcerack index --force\` |
 
 ## JSON Output
 
-Add \`--json\` to any command for machine-readable output:
-\`\`\`bash
-sourcerack query "auth" --json
-sourcerack find-def UserService --json
-\`\`\`
+Add \`--json\` to any command for machine-readable output.
 `;
 }

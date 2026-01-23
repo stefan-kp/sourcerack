@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Multi-repo search with `--repos` option** - Filter searches by repository name
+  - Commands: `find-def`, `find-usages`, `dependents`, `impact`, `dead-code`, `query`
+  - Ambiguous names (multiple repos with same name) show clear error with paths
+  - Combine with `--all-repos` for cross-repo analysis
+- **Embedding status in `repos` command** - Shows SQI-only vs SQI+embeddings per repo
 - **SQLite-vec as default vector storage** - No Docker required for semantic search
   - Uses native kNN search with L2 distance via sqlite-vec extension
   - Single-file database at `~/.sourcerack/vectors.db`
