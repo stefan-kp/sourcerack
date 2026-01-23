@@ -70,7 +70,7 @@ describe('StructuredQueryEngine', () => {
       content_hash: 'helper-hash',
     });
 
-    sqi.insertSymbol(repo.id, commitId, {
+    const greetId = sqi.insertSymbol(repo.id, commitId, {
       name: 'greet',
       qualified_name: 'greet',
       symbol_kind: SymbolKind.FUNCTION,
@@ -92,6 +92,7 @@ describe('StructuredQueryEngine', () => {
     ]);
     if (usageId) {
       sqi.linkUsageToDefinition(usageId, helperId);
+      sqi.linkUsageToEnclosing(usageId, greetId);
     }
 
     sqi.insertImports(commitId, [
@@ -110,6 +111,9 @@ describe('StructuredQueryEngine', () => {
         bindings: [{ imported_name: 'helper', local_name: 'helper' }],
       },
     ]);
+
+    // Mark indexing as complete
+    metadata.completeIndexing(commitId, 2);
   });
 
   afterAll(() => {
