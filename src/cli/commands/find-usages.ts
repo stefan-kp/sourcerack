@@ -16,7 +16,6 @@ import { getDirtySymbols, flattenDirtyUsages } from '../../dirty/index.js';
  * Command options
  */
 interface FindUsagesOptions {
-  path?: string;
   commit?: string;
   file?: string;
   json?: boolean;
@@ -64,6 +63,7 @@ function extractedUsageToInfo(usage: ExtractedUsage): UsageInfo {
  */
 async function executeFindUsages(
   symbolName: string,
+  repoPath: string | undefined,
   options: FindUsagesOptions
 ): Promise<void> {
   const isJson = options.json === true;
@@ -71,7 +71,7 @@ async function executeFindUsages(
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Get dirty file usages if enabled
     let dirtyUsages: UsageInfo[] = [];
@@ -229,13 +229,13 @@ export function registerFindUsagesCommand(program: Command): void {
     .command('find-usages')
     .description('Find all usages/references of a symbol')
     .argument('<symbol>', 'Symbol name to find usages for')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('-f, --file <path>', 'Limit search to a specific file')
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
     .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
-    .action(async (symbolName: string, options: FindUsagesOptions) => {
-      await executeFindUsages(symbolName, options);
+    .action(async (symbolName: string, repoPath: string | undefined, options: FindUsagesOptions) => {
+      await executeFindUsages(symbolName, repoPath, options);
     });
 }

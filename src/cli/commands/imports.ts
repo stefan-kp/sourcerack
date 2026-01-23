@@ -15,13 +15,11 @@ import type { ImportInfo } from '../../sqi/types.js';
  * Command options
  */
 interface ImportsOptions {
-  path?: string;
   commit?: string;
   json?: boolean;
 }
 
 interface ImportersOptions {
-  path?: string;
   commit?: string;
   json?: boolean;
 }
@@ -63,13 +61,14 @@ function formatImport(imp: ImportInfo): string {
  */
 async function executeImports(
   filePath: string,
+  repoPath: string | undefined,
   options: ImportsOptions
 ): Promise<void> {
   const isJson = options.json === true;
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Run with context
     const result = await withContext(
@@ -137,13 +136,14 @@ async function executeImports(
  */
 async function executeImporters(
   moduleName: string,
+  repoPath: string | undefined,
   options: ImportersOptions
 ): Promise<void> {
   const isJson = options.json === true;
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Run with context
     const result = await withContext(
@@ -193,33 +193,34 @@ async function executeImporters(
 }
 
 /**
- * Register the imports command
+ * Register the dependencies command
  */
-export function registerImportsCommand(program: Command): void {
+export function registerDependenciesCommand(program: Command): void {
   program
-    .command('imports')
-    .description('Show all imports in a file')
+    .command('dependencies')
+    .alias('deps')
+    .description('Show dependencies of a file (what does this file import?)')
     .argument('<file>', 'File path to analyze')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('--json', 'Output in JSON format')
-    .action(async (filePath: string, options: ImportsOptions) => {
-      await executeImports(filePath, options);
+    .action(async (filePath: string, repoPath: string | undefined, options: ImportsOptions) => {
+      await executeImports(filePath, repoPath, options);
     });
 }
 
 /**
- * Register the importers command
+ * Register the dependents command
  */
-export function registerImportersCommand(program: Command): void {
+export function registerDependentsCommand(program: Command): void {
   program
-    .command('importers')
-    .description('Find all files that import a module')
+    .command('dependents')
+    .description('Show dependents of a module (who imports this module?)')
     .argument('<module>', 'Module specifier to search for (e.g., "@/utils", "lodash")')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('--json', 'Output in JSON format')
-    .action(async (moduleName: string, options: ImportersOptions) => {
-      await executeImporters(moduleName, options);
+    .action(async (moduleName: string, repoPath: string | undefined, options: ImportersOptions) => {
+      await executeImporters(moduleName, repoPath, options);
     });
 }

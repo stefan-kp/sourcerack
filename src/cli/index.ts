@@ -15,7 +15,7 @@ import { registerGCCommand } from './commands/gc.js';
 import { registerFindDefCommand } from './commands/find-definition.js';
 import { registerFindUsagesCommand } from './commands/find-usages.js';
 import { registerHierarchyCommand } from './commands/hierarchy.js';
-import { registerImportsCommand, registerImportersCommand } from './commands/imports.js';
+import { registerDependenciesCommand, registerDependentsCommand } from './commands/imports.js';
 import { registerSetupCommand } from './commands/setup.js';
 // Agent-focused commands
 import { registerSummaryCommand } from './commands/summary.js';
@@ -46,8 +46,8 @@ function createProgram(): Command {
   registerFindDefCommand(program);
   registerFindUsagesCommand(program);
   registerHierarchyCommand(program);
-  registerImportsCommand(program);
-  registerImportersCommand(program);
+  registerDependenciesCommand(program);
+  registerDependentsCommand(program);
 
   // Setup command
   registerSetupCommand(program);

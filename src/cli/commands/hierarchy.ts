@@ -15,7 +15,6 @@ import type { SymbolInfo } from '../../sqi/types.js';
  * Command options
  */
 interface HierarchyOptions {
-  path?: string;
   commit?: string;
   direction?: 'children' | 'parents' | 'both';
   depth?: string;
@@ -46,6 +45,7 @@ function formatSymbol(symbol: SymbolInfo, indent: number = 0): string {
  */
 async function executeHierarchy(
   symbolName: string,
+  repoPath: string | undefined,
   options: HierarchyOptions
 ): Promise<void> {
   const isJson = options.json === true;
@@ -53,7 +53,7 @@ async function executeHierarchy(
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Run with context
     const result = await withContext(
@@ -126,7 +126,7 @@ export function registerHierarchyCommand(program: Command): void {
     .command('hierarchy')
     .description('Show symbol hierarchy (children/parents)')
     .argument('<symbol>', 'Symbol name to show hierarchy for')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option(
       '-d, --direction <dir>',
@@ -135,7 +135,7 @@ export function registerHierarchyCommand(program: Command): void {
     )
     .option('--depth <n>', 'Maximum depth to traverse (default: unlimited)')
     .option('--json', 'Output in JSON format')
-    .action(async (symbolName: string, options: HierarchyOptions) => {
-      await executeHierarchy(symbolName, options);
+    .action(async (symbolName: string, repoPath: string | undefined, options: HierarchyOptions) => {
+      await executeHierarchy(symbolName, repoPath, options);
     });
 }

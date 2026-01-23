@@ -15,7 +15,6 @@ import { createQueryOrchestrator } from '../../indexer/query.js';
  * Query command options
  */
 interface QueryOptions {
-  path?: string;
   commit?: string;
   limit?: string;
   language?: string;
@@ -26,12 +25,12 @@ interface QueryOptions {
 /**
  * Execute the query command
  */
-async function executeQuery(searchQuery: string, options: QueryOptions): Promise<void> {
+async function executeQuery(searchQuery: string, repoPath: string | undefined, options: QueryOptions): Promise<void> {
   const isJson = options.json === true;
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Parse limit
     const limit = options.limit !== undefined ? parseInt(options.limit, 10) : 10;
@@ -147,13 +146,13 @@ export function registerQueryCommand(program: Command): void {
     .command('query')
     .description('Search for code semantically within an indexed commit')
     .argument('<search-query>', 'Natural language search query')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('-n, --limit <n>', 'Maximum results (default: 10)')
     .option('-l, --language <lang>', 'Filter by programming language')
     .option('--path-pattern <pattern>', 'Filter by path pattern (e.g., "src/api/*")')
     .option('--json', 'Output in JSON format')
-    .action(async (searchQuery: string, options: QueryOptions) => {
-      await executeQuery(searchQuery, options);
+    .action(async (searchQuery: string, repoPath: string | undefined, options: QueryOptions) => {
+      await executeQuery(searchQuery, repoPath, options);
     });
 }

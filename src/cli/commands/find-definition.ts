@@ -16,7 +16,6 @@ import { getDirtySymbols, flattenDirtySymbols } from '../../dirty/index.js';
  * Command options
  */
 interface FindDefOptions {
-  path?: string;
   commit?: string;
   type?: string;
   json?: boolean;
@@ -90,6 +89,7 @@ function extractedSymbolToInfo(symbol: ExtractedSymbol): SymbolInfo {
  */
 async function executeFindDef(
   symbolName: string,
+  repoPath: string | undefined,
   options: FindDefOptions
 ): Promise<void> {
   const isJson = options.json === true;
@@ -97,7 +97,7 @@ async function executeFindDef(
 
   try {
     // Detect repository context
-    const repoContext = await detectRepoContext(options.path, options.commit);
+    const repoContext = await detectRepoContext(repoPath, options.commit);
 
     // Get dirty file symbols if enabled
     let dirtyDefinitions: SymbolInfo[] = [];
@@ -223,13 +223,13 @@ export function registerFindDefCommand(program: Command): void {
     .command('find-def')
     .description('Find symbol definitions by name')
     .argument('<symbol>', 'Symbol name to find (e.g., "MyClass", "handleRequest")')
-    .option('-p, --path <path>', 'Repository path (default: current directory)')
+    .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('-t, --type <kind>', 'Filter by symbol type (function, class, method, interface)')
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
     .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
-    .action(async (symbolName: string, options: FindDefOptions) => {
-      await executeFindDef(symbolName, options);
+    .action(async (symbolName: string, repoPath: string | undefined, options: FindDefOptions) => {
+      await executeFindDef(symbolName, repoPath, options);
     });
 }

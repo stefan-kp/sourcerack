@@ -25,7 +25,7 @@ interface IndexOptions {
   quiet?: boolean;
   reset?: boolean;
   force?: boolean;
-  sqi?: boolean;
+  embeddings?: boolean;
 }
 
 /**
@@ -126,7 +126,10 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
     // Create progress display
     const progress = createProgressDisplay({ quiet: isQuiet, json: isJson });
 
-    // Run with full context
+    // Determine if we need embeddings (default: no, SQI-only)
+    const needsEmbeddings = options.embeddings === true;
+
+    // Run with context (skip embeddings/vectors if SQI-only)
     const result = await withContext(async (context) => {
       // Create Git adapter
       const git = await GitAdapter.create(repoContext.repoPath);
@@ -141,18 +144,19 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
       const indexer = createIndexer(
         git,
         context.metadata,
-        context.vectors,
-        context.embeddings
+        needsEmbeddings ? context.vectors : null,
+        needsEmbeddings ? context.embeddings : null
       );
 
       // Build indexing options
+      // Default: SQI-only (fast). Use --embeddings for semantic search.
       const indexingOptions: IndexingOptions = {
         repoPath: repoContext.repoPath,
         repoId: repo.id,
         commitSha: repoContext.commitSha,
         onProgress: progress.createCallback(),
         force: options.force === true,
-        skipEmbeddings: options.sqi === true,
+        skipEmbeddings: options.embeddings !== true,
       };
       if (options.branch !== undefined) {
         indexingOptions.branch = options.branch;
@@ -167,7 +171,7 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
       progress.finish();
 
       return result;
-    });
+    }, { skipEmbeddings: !needsEmbeddings, skipVectors: !needsEmbeddings });
 
     // Format and output result
     formatIndexResult(result, { json: isJson, quiet: isQuiet });
@@ -187,13 +191,13 @@ async function executeIndex(path: string | undefined, options: IndexOptions): Pr
 export function registerIndexCommand(program: Command): void {
   program
     .command('index')
-    .description('Index a codebase at a specific commit for semantic search')
+    .description('Index a codebase for code intelligence (SQI-only by default, fast)')
     .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit, branch, or tag to index (default: HEAD)')
     .option('-b, --branch <name>', 'Branch label for reference')
     .option('--reset', 'Delete all indexed data for this repository')
     .option('--force', 'Force re-indexing even if commit was already indexed')
-    .option('--sqi', 'SQI-only mode: skip embeddings (no Qdrant needed)')
+    .option('--embeddings', 'Also build embeddings for semantic search (slower)')
     .option('--json', 'Output in JSON format')
     .option('-q, --quiet', 'Suppress progress output')
     .action(async (path: string | undefined, options: IndexOptions) => {
