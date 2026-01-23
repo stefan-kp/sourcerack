@@ -11,7 +11,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { handleError } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { FindDeadCodeOutput, DeadSymbolInfo } from '../../sqi/types.js';
-import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
+import { parseReposOption, resolveRepoIdentifiers, resolveGroupRepos } from '../repo-filter.js';
 
 /**
  * Dead code command options
@@ -24,6 +24,7 @@ interface DeadCodeOptions {
   excludeTests?: boolean;
   allRepos?: boolean;
   repos?: string[];
+  group?: string;
 }
 
 /**
@@ -189,7 +190,8 @@ async function executeDeadCode(path: string | undefined, options: DeadCodeOption
   const isJson = options.json === true;
   const allRepos = options.allRepos === true;
   const reposFilter = parseReposOption(options.repos);
-  const isMultiRepo = allRepos || reposFilter.length > 0;
+  const groupFilter = options.group;
+  const isMultiRepo = allRepos || reposFilter.length > 0 || groupFilter !== undefined;
 
   try {
     // For multi-repo search, skip repo context detection
@@ -206,7 +208,10 @@ async function executeDeadCode(path: string | undefined, options: DeadCodeOption
 
         const findDeadCodeInput: Parameters<typeof queryEngine.findDeadCode>[0] = {};
 
-        if (allRepos) {
+        if (groupFilter !== undefined) {
+          const resolved = resolveGroupRepos(context.metadata, groupFilter);
+          findDeadCodeInput.repo_ids = resolved.repoIds;
+        } else if (allRepos) {
           findDeadCodeInput.all_repos = true;
         } else if (reposFilter.length > 0) {
           const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
@@ -259,6 +264,7 @@ export function registerDeadCodeCommand(program: Command): void {
     .option('--json', 'Output in JSON format')
     .option('--all-repos', 'Search across all indexed repositories')
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
+    .option('-g, --group <name>', 'Search repositories in named group')
     .action(async (path: string | undefined, options: DeadCodeOptions) => {
       await executeDeadCode(path, options);
     });

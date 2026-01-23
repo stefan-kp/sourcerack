@@ -23,6 +23,10 @@ import { registerContextCommand } from './commands/context.js';
 // LSP-differentiating commands
 import { registerDeadCodeCommand } from './commands/dead-code.js';
 import { registerImpactCommand } from './commands/impact.js';
+// API Discovery
+import { registerEndpointsCommand } from './commands/endpoints.js';
+// Group management
+import { createGroupCommand } from './commands/group.js';
 
 /**
  * Create and configure the CLI program
@@ -59,6 +63,12 @@ function createProgram(): Command {
   // LSP-differentiating commands
   registerDeadCodeCommand(program);
   registerImpactCommand(program);
+
+  // API Discovery
+  registerEndpointsCommand(program);
+
+  // Group management
+  program.addCommand(createGroupCommand());
 
   return program;
 }

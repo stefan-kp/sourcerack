@@ -10,7 +10,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { formatQueryResults, type QueryOutputDisplay, type QueryResultDisplay } from '../output.js';
 import { handleError, ExitCode, AgentErrors, exitWithAgentError } from '../errors.js';
 import { createQueryOrchestrator } from '../../indexer/query.js';
-import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
+import { parseReposOption, resolveRepoIdentifiers, resolveGroupRepos } from '../repo-filter.js';
 
 /**
  * Query command options
@@ -23,6 +23,7 @@ interface QueryOptions {
   json?: boolean;
   allRepos?: boolean;
   repos?: string[];
+  group?: string;
 }
 
 /**
@@ -32,7 +33,8 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
   const isJson = options.json === true;
   const allRepos = options.allRepos === true;
   const reposFilter = parseReposOption(options.repos);
-  const isMultiRepo = allRepos || reposFilter.length > 0;
+  const groupFilter = options.group;
+  const isMultiRepo = allRepos || reposFilter.length > 0 || groupFilter !== undefined;
 
   try {
     // Parse limit
@@ -62,8 +64,13 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
         // Cross-repo search: query specified or all indexed repositories
         let repos = context.metadata.listRepositories();
 
-        // Filter by --repos if specified
-        if (reposFilter.length > 0) {
+        // Filter by --group if specified (takes precedence over --repos)
+        if (groupFilter !== undefined) {
+          const resolved = resolveGroupRepos(context.metadata, groupFilter);
+          const filterSet = new Set(resolved.repoIds);
+          repos = repos.filter((r) => filterSet.has(r.id));
+        } else if (reposFilter.length > 0) {
+          // Filter by --repos if specified
           const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
           const filterSet = new Set(resolved.repoIds);
           repos = repos.filter((r) => filterSet.has(r.id));
@@ -238,6 +245,7 @@ export function registerQueryCommand(program: Command): void {
     .option('--json', 'Output in JSON format')
     .option('--all-repos', 'Search across all indexed repositories')
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
+    .option('-g, --group <name>', 'Search repositories in named group')
     .action(async (searchQuery: string, repoPath: string | undefined, options: QueryOptions) => {
       await executeQuery(searchQuery, repoPath, options);
     });

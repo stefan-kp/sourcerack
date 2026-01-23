@@ -10,7 +10,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { handleError, ExitCode } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { ImportInfo } from '../../sqi/types.js';
-import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
+import { parseReposOption, resolveRepoIdentifiers, resolveGroupRepos } from '../repo-filter.js';
 
 /**
  * Command options
@@ -25,6 +25,7 @@ interface ImportersOptions {
   json?: boolean;
   allRepos?: boolean;
   repos?: string[];
+  group?: string;
 }
 
 /**
@@ -145,7 +146,8 @@ async function executeImporters(
   const isJson = options.json === true;
   const allRepos = options.allRepos === true;
   const reposFilter = parseReposOption(options.repos);
-  const isMultiRepo = allRepos || reposFilter.length > 0;
+  const groupFilter = options.group;
+  const isMultiRepo = allRepos || reposFilter.length > 0 || groupFilter !== undefined;
 
   try {
     // For multi-repo search, skip repo context detection
@@ -164,7 +166,10 @@ async function executeImporters(
           module: moduleName,
         };
 
-        if (allRepos) {
+        if (groupFilter !== undefined) {
+          const resolved = resolveGroupRepos(context.metadata, groupFilter);
+          input.repo_ids = resolved.repoIds;
+        } else if (allRepos) {
           input.all_repos = true;
         } else if (reposFilter.length > 0) {
           const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
@@ -274,6 +279,7 @@ export function registerDependentsCommand(program: Command): void {
     .option('--json', 'Output in JSON format')
     .option('--all-repos', 'Search across all indexed repositories')
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
+    .option('-g, --group <name>', 'Search repositories in named group')
     .action(async (moduleName: string, repoPath: string | undefined, options: ImportersOptions) => {
       await executeImporters(moduleName, repoPath, options);
     });

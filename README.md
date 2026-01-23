@@ -76,6 +76,7 @@ sourcerack query "error handling in API routes"
 | `sourcerack query <search>` | Semantic search |
 | `sourcerack status` | Show index status |
 | `sourcerack repos` | List indexed repositories |
+| `sourcerack group <cmd>` | Manage repository groups |
 
 ### Examples
 
@@ -116,6 +117,45 @@ sourcerack impact SharedUtil --all-repos
 
 # Find dead code across repos
 sourcerack dead-code --repos "app-a,app-b"
+```
+
+### Repository Groups
+
+Organize repositories into named groups for easier multi-repo searches:
+
+```bash
+# Create a group
+sourcerack group add myproject --repos frontend,backend,shared
+
+# Search within a group
+sourcerack find-def UserService --group myproject
+sourcerack find-usages authenticate --group myproject
+sourcerack query "error handling" --group myproject
+
+# List all groups
+sourcerack group list
+
+# Set a default group (used when no filter specified)
+sourcerack group default myproject
+
+# Other group commands
+sourcerack group show myproject       # Show group details
+sourcerack group remove myproject     # Remove a group
+sourcerack group default --clear      # Clear default group
+```
+
+Groups are stored in `~/.sourcerack/config.json` and can be manually edited:
+
+```json
+{
+  "groups": {
+    "myproject": {
+      "repos": ["frontend", "backend", "shared"],
+      "description": "My main project repositories"
+    }
+  },
+  "defaultGroup": "myproject"
+}
 ```
 
 ## Configuration

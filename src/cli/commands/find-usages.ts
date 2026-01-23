@@ -11,7 +11,7 @@ import { handleError, ExitCode } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { UsageInfo, ExtractedUsage, FuzzyUsageMatch } from '../../sqi/types.js';
 import { getDirtySymbols, flattenDirtyUsages } from '../../dirty/index.js';
-import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
+import { parseReposOption, resolveRepoIdentifiers, resolveGroupRepos } from '../repo-filter.js';
 
 /**
  * Command options
@@ -24,6 +24,7 @@ interface FindUsagesOptions {
   fuzzy?: boolean;
   allRepos?: boolean;
   repos?: string[];
+  group?: string;
 }
 
 /**
@@ -74,7 +75,8 @@ async function executeFindUsages(
   const includeDirty = options.dirty ?? true; // Default: include dirty files
   const allRepos = options.allRepos === true;
   const reposFilter = parseReposOption(options.repos);
-  const isMultiRepo = allRepos || reposFilter.length > 0;
+  const groupFilter = options.group;
+  const isMultiRepo = allRepos || reposFilter.length > 0 || groupFilter !== undefined;
 
   try {
     // For multi-repo search, skip repo context detection
@@ -116,7 +118,10 @@ async function executeFindUsages(
           symbol_name: symbolName,
         };
 
-        if (allRepos) {
+        if (groupFilter !== undefined) {
+          const resolved = resolveGroupRepos(context.metadata, groupFilter);
+          input.repo_ids = resolved.repoIds;
+        } else if (allRepos) {
           input.all_repos = true;
         } else if (reposFilter.length > 0) {
           const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
@@ -289,6 +294,7 @@ export function registerFindUsagesCommand(program: Command): void {
     .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
     .option('--all-repos', 'Search across all indexed repositories')
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
+    .option('-g, --group <name>', 'Search repositories in named group')
     .action(async (symbolName: string, repoPath: string | undefined, options: FindUsagesOptions) => {
       await executeFindUsages(symbolName, repoPath, options);
     });

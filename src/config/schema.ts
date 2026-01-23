@@ -107,6 +107,29 @@ export const GCConfigSchema = z.object({
 });
 
 /**
+ * Repository group configuration
+ *
+ * Groups allow organizing repositories into logical collections
+ * for easier multi-repo operations.
+ */
+export const RepoGroupSchema = z.object({
+  /** Repository paths or names in this group */
+  repos: z.array(z.string()).min(1),
+  /** Optional description of the group */
+  description: z.string().optional(),
+});
+
+/**
+ * Groups configuration
+ */
+export const GroupsConfigSchema = z.object({
+  /** Named repository groups */
+  groups: z.record(z.string(), RepoGroupSchema).default({}),
+  /** Default group to use when no group is specified */
+  defaultGroup: z.string().optional(),
+});
+
+/**
  * SQLite metadata storage configuration
  *
  * Default location is cross-platform:
@@ -129,6 +152,9 @@ export const SourceRackConfigSchema = z.object({
   logging: LoggingConfigSchema.default({}),
   gc: GCConfigSchema.default({}),
   storage: StorageConfigSchema.default({}),
+  // Repository groups for organizing multi-repo workflows
+  groups: z.record(z.string(), RepoGroupSchema).default({}),
+  defaultGroup: z.string().optional(),
 });
 
 /**
@@ -144,6 +170,7 @@ export type QueryConfig = z.infer<typeof QueryConfigSchema>;
 export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type GCConfig = z.infer<typeof GCConfigSchema>;
 export type StorageConfig = z.infer<typeof StorageConfigSchema>;
+export type RepoGroup = z.infer<typeof RepoGroupSchema>;
 export type SourceRackConfig = z.infer<typeof SourceRackConfigSchema>;
 
 /**

@@ -30,6 +30,7 @@ import { handleCodebaseSummary } from './tools/sqi-codebase-summary.js';
 import { handleGetSymbolContext } from './tools/sqi-symbol-context.js';
 import { handleChangeImpact } from './tools/sqi-change-impact.js';
 import { handleDependencyGraph } from './tools/sqi-dependency-graph.js';
+import { handleFindEndpoints } from './tools/sqi-find-endpoints.js';
 import type {
   IndexCodebaseInput,
   QueryCodeInput,
@@ -46,6 +47,50 @@ import type {
   ChangeImpactInput,
   DependencyGraphInput,
 } from '../sqi/types.js';
+import type { FindEndpointsInput } from '../sqi/extractors/api/types.js';
+import { getGroup } from '../config/groups.js';
+
+/**
+ * Input types with group support for MCP
+ */
+interface WithGroupInput {
+  group?: string;
+}
+
+/**
+ * Resolve group to repo IDs
+ */
+function resolveGroupToRepoIds(metadata: MetadataStorage, groupName: string): string[] {
+  const group = getGroup(groupName);
+  if (!group) {
+    throw new Error(`Group not found: "${groupName}"`);
+  }
+
+  // Resolve group repo identifiers to repo IDs
+  const allRepos = metadata.listRepositories();
+  const repoIds: string[] = [];
+
+  for (const identifier of group.repos) {
+    // Try exact path match first
+    const byPath = metadata.getRepositoryByPath(identifier);
+    if (byPath !== null) {
+      repoIds.push(byPath.id);
+      continue;
+    }
+
+    // Try by name
+    const byName = allRepos.filter((r) => r.name === identifier);
+    if (byName.length === 1) {
+      repoIds.push(byName[0]!.id);
+    } else if (byName.length > 1) {
+      throw new Error(`Ambiguous repository name "${identifier}" in group "${groupName}"`);
+    } else {
+      throw new Error(`Repository not found: "${identifier}" in group "${groupName}"`);
+    }
+  }
+
+  return repoIds;
+}
 
 /**
  * MCP tool definitions
@@ -166,8 +211,16 @@ const TOOLS = [
           type: 'string',
           description: 'Filter by symbol kind (e.g., "function", "class", "method", "interface")',
         },
+        all_repos: {
+          type: 'boolean',
+          description: 'Search across all indexed repositories',
+        },
+        group: {
+          type: 'string',
+          description: 'Search repositories in named group',
+        },
       },
-      required: ['repo_path', 'symbol_name'],
+      required: ['symbol_name'],
     },
   },
   {
@@ -193,8 +246,16 @@ const TOOLS = [
           type: 'string',
           description: 'Optional: limit search to a specific file',
         },
+        all_repos: {
+          type: 'boolean',
+          description: 'Search across all indexed repositories',
+        },
+        group: {
+          type: 'string',
+          description: 'Search repositories in named group',
+        },
       },
-      required: ['repo_path', 'symbol_name'],
+      required: ['symbol_name'],
     },
   },
   {
@@ -267,8 +328,16 @@ const TOOLS = [
           type: 'string',
           description: 'Module specifier to search for (e.g., "@/utils", "lodash")',
         },
+        all_repos: {
+          type: 'boolean',
+          description: 'Search across all indexed repositories',
+        },
+        group: {
+          type: 'string',
+          description: 'Search repositories in named group',
+        },
       },
-      required: ['repo_path', 'commit', 'module'],
+      required: ['module'],
     },
   },
   {
@@ -364,8 +433,16 @@ const TOOLS = [
           type: 'number',
           description: 'Maximum depth for transitive impact traversal (default: 3)',
         },
+        all_repos: {
+          type: 'boolean',
+          description: 'Analyze impact across all indexed repositories',
+        },
+        group: {
+          type: 'string',
+          description: 'Analyze repositories in named group',
+        },
       },
-      required: ['repo_path', 'symbol_name'],
+      required: ['symbol_name'],
     },
   },
   {
@@ -389,6 +466,50 @@ const TOOLS = [
         },
       },
       required: ['repo_path'],
+    },
+  },
+  {
+    name: 'find_endpoints',
+    description:
+      'Find API endpoints in the codebase. Supports Express, FastAPI, Flask, Rails, NestJS, and MCP tools.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repo_path: {
+          type: 'string',
+          description: 'Path to the repository on disk',
+        },
+        commit: {
+          type: 'string',
+          description: 'Commit SHA to search within (must be indexed)',
+        },
+        method: {
+          type: 'string',
+          description: 'Filter by HTTP method (GET, POST, PUT, PATCH, DELETE)',
+        },
+        path_pattern: {
+          type: 'string',
+          description: 'Filter by path pattern (supports * wildcards, e.g., "/api/*")',
+        },
+        framework: {
+          type: 'string',
+          description: 'Filter by framework (express, fastapi, flask, rails, nestjs, mcp)',
+        },
+        all_repos: {
+          type: 'boolean',
+          description: 'Search across all indexed repositories',
+        },
+        repo_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Search only in specific repositories (by ID)',
+        },
+        group: {
+          type: 'string',
+          description: 'Search repositories in named group',
+        },
+      },
+      required: [],
     },
   },
 ];
@@ -539,7 +660,12 @@ export async function createMCPServer(): Promise<Server> {
 
           // SQI Tools
           case 'find_definition': {
-            const input = args as unknown as FindDefinitionInput;
+            const rawInput = args as unknown as FindDefinitionInput & WithGroupInput;
+            const input: FindDefinitionInput = { ...rawInput };
+            // Resolve group to repo_ids
+            if (rawInput.group) {
+              input.repo_ids = resolveGroupToRepoIds(metadata, rawInput.group);
+            }
             const result = await handleFindDefinition(input, metadata);
             return {
               content: [
@@ -552,7 +678,12 @@ export async function createMCPServer(): Promise<Server> {
           }
 
           case 'find_usages': {
-            const input = args as unknown as FindUsagesInput;
+            const rawInput = args as unknown as FindUsagesInput & WithGroupInput;
+            const input: FindUsagesInput = { ...rawInput };
+            // Resolve group to repo_ids
+            if (rawInput.group) {
+              input.repo_ids = resolveGroupToRepoIds(metadata, rawInput.group);
+            }
             const result = await handleFindUsages(input, metadata);
             return {
               content: [
@@ -591,7 +722,12 @@ export async function createMCPServer(): Promise<Server> {
           }
 
           case 'find_importers': {
-            const input = args as unknown as FindImportersInput;
+            const rawInput = args as unknown as FindImportersInput & WithGroupInput;
+            const input: FindImportersInput = { ...rawInput };
+            // Resolve group to repo_ids
+            if (rawInput.group) {
+              input.repo_ids = resolveGroupToRepoIds(metadata, rawInput.group);
+            }
             const result = await handleFindImporters(input, metadata);
             return {
               content: [
@@ -627,7 +763,12 @@ export async function createMCPServer(): Promise<Server> {
             };
           }
           case 'change_impact': {
-            const input = args as unknown as ChangeImpactInput;
+            const rawInput = args as unknown as ChangeImpactInput & WithGroupInput;
+            const input: ChangeImpactInput = { ...rawInput };
+            // Resolve group to repo_ids
+            if (rawInput.group) {
+              input.repo_ids = resolveGroupToRepoIds(metadata, rawInput.group);
+            }
             const result = await handleChangeImpact(input, metadata);
             return {
               content: [
@@ -641,6 +782,24 @@ export async function createMCPServer(): Promise<Server> {
           case 'dependency_graph': {
             const input = args as unknown as DependencyGraphInput;
             const result = await handleDependencyGraph(input, metadata);
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+
+          case 'find_endpoints': {
+            const rawInput = args as unknown as FindEndpointsInput & WithGroupInput;
+            const input: FindEndpointsInput = { ...rawInput };
+            // Resolve group to repo_ids
+            if (rawInput.group) {
+              input.repo_ids = resolveGroupToRepoIds(metadata, rawInput.group);
+            }
+            const result = await handleFindEndpoints(input, metadata);
             return {
               content: [
                 {
