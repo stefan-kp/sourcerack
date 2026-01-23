@@ -291,6 +291,10 @@ export interface SymbolInfo {
   return_type?: string | undefined;
   docstring?: string | undefined;
   parameters?: ParameterInfo[] | undefined;
+  /** Repository name (populated in cross-repo queries) */
+  repo_name?: string | undefined;
+  /** Repository path (populated in cross-repo queries) */
+  repo_path?: string | undefined;
 }
 
 /**
@@ -312,6 +316,10 @@ export interface UsageInfo {
   usage_type: UsageType;
   context_snippet: string;
   enclosing_symbol?: string | undefined;
+  /** Repository name (populated in cross-repo queries) */
+  repo_name?: string | undefined;
+  /** Repository path (populated in cross-repo queries) */
+  repo_path?: string | undefined;
 }
 
 /**
@@ -341,14 +349,20 @@ export interface ImportBindingInfo {
  * Input for find_definition query
  */
 export interface FindDefinitionInput {
-  repo_path: string;
-  commit: string;
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD, ignored if all_repos or repo_ids is set) */
+  commit?: string;
   symbol_name: string;
   symbol_kind?: SymbolKind | undefined;
   /** Enable fuzzy matching with trigram similarity */
   fuzzy?: boolean;
   /** Minimum similarity threshold for fuzzy matches (0-1, default 0.3) */
   min_similarity?: number;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
 }
 
 /**
@@ -374,12 +388,18 @@ export interface FindDefinitionOutput {
  * Input for find_usages query
  */
 export interface FindUsagesInput {
-  repo_path: string;
-  commit: string;
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD, ignored if all_repos or repo_ids is set) */
+  commit?: string;
   symbol_name: string;
   file_path?: string | undefined;
   fuzzy?: boolean;
   min_similarity?: number;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
 }
 
 /**
@@ -442,12 +462,18 @@ export interface FindImportsOutput {
 }
 
 /**
- * Input for find_importers query
+ * Input for find_importers query (dependents)
  */
 export interface FindImportersInput {
-  repo_path: string;
-  commit: string;
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD, ignored if all_repos or repo_ids is set) */
+  commit?: string;
   module: string;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
 }
 
 /**
@@ -459,6 +485,10 @@ export interface FindImportersOutput {
     file_path: string;
     line: number;
     bindings: ImportBindingInfo[];
+    /** Repository name (populated in cross-repo queries) */
+    repo_name?: string | undefined;
+    /** Repository path (populated in cross-repo queries) */
+    repo_path?: string | undefined;
   }[];
   error?: string;
 }
@@ -650,16 +680,26 @@ export interface DeadSymbolInfo {
   start_line: number;
   end_line: number;
   is_exported: boolean;
+  /** Repository name (populated in cross-repo queries) */
+  repo_name?: string | undefined;
+  /** Repository path (populated in cross-repo queries) */
+  repo_path?: string | undefined;
 }
 
 /**
  * Input for finding dead code in a codebase
  */
 export interface FindDeadCodeInput {
-  repo_path: string;
-  commit: string;
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD, ignored if all_repos or repo_ids is set) */
+  commit?: string;
   exported_only?: boolean;
   limit?: number;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
 }
 
 /**
@@ -687,16 +727,26 @@ export interface ImpactInfo {
   start_line: number;
   depth: number;
   usage_type: UsageType;
+  /** Repository name (populated in cross-repo queries) */
+  repo_name?: string | undefined;
+  /** Repository path (populated in cross-repo queries) */
+  repo_path?: string | undefined;
 }
 
 /**
  * Input for change impact analysis
  */
 export interface ChangeImpactInput {
-  repo_path: string;
-  commit: string;
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD, ignored if all_repos or repo_ids is set) */
+  commit?: string;
   symbol_name: string;
   max_depth?: number;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
 }
 
 /**

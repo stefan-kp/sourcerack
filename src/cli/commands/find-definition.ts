@@ -11,6 +11,7 @@ import { handleError, ExitCode, AgentErrors, exitWithAgentError } from '../error
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { SymbolKind, SymbolInfo, ExtractedSymbol, FuzzyMatch } from '../../sqi/types.js';
 import { getDirtySymbols, flattenDirtySymbols } from '../../dirty/index.js';
+import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
 
 /**
  * Command options
@@ -21,13 +22,16 @@ interface FindDefOptions {
   json?: boolean;
   dirty?: boolean;
   fuzzy?: boolean;
+  allRepos?: boolean;
+  repos?: string[];
 }
 
 /**
  * Format symbol info for display
  */
-function formatSymbolInfo(symbol: SymbolInfo, showDetails: boolean = false): string {
-  const location = `${symbol.file_path}:${symbol.start_line}`;
+function formatSymbolInfo(symbol: SymbolInfo, showDetails: boolean = false, showRepo: boolean = false): string {
+  const repoPrefix = showRepo && symbol.repo_name ? `[${symbol.repo_name}] ` : '';
+  const location = `${repoPrefix}${symbol.file_path}:${symbol.start_line}`;
   const kindBadge = `[${symbol.kind}]`;
   const asyncBadge = symbol.is_async ? 'async ' : '';
   const staticBadge = symbol.is_static ? 'static ' : '';
@@ -94,16 +98,23 @@ async function executeFindDef(
 ): Promise<void> {
   const isJson = options.json === true;
   const includeDirty = options.dirty ?? true; // Default: include dirty files
+  const allRepos = options.allRepos === true;
+  const reposFilter = parseReposOption(options.repos);
+  const isMultiRepo = allRepos || reposFilter.length > 0;
 
   try {
-    // Detect repository context
-    const repoContext = await detectRepoContext(repoPath, options.commit);
+    // For multi-repo search, skip repo context detection
+    let repoContext: { repoPath: string; commitSha: string } | undefined;
 
-    // Get dirty file symbols if enabled
+    if (!isMultiRepo) {
+      repoContext = await detectRepoContext(repoPath, options.commit);
+    }
+
+    // Get dirty file symbols if enabled (only for single repo)
     let dirtyDefinitions: SymbolInfo[] = [];
     let dirtyFilePaths = new Set<string>();
 
-    if (includeDirty) {
+    if (includeDirty && repoContext) {
       try {
         const dirty = await getDirtySymbols(repoContext.repoPath);
         dirtyFilePaths = dirty.dirtyFilePaths;
@@ -128,10 +139,20 @@ async function executeFindDef(
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
         const input: Parameters<typeof queryEngine.findDefinition>[0] = {
-          repo_path: repoContext.repoPath,
-          commit: repoContext.commitSha,
           symbol_name: symbolName,
         };
+
+        if (allRepos) {
+          input.all_repos = true;
+        } else if (reposFilter.length > 0) {
+          // Resolve repo names to IDs
+          const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
+          input.repo_ids = resolved.repoIds;
+        } else if (repoContext) {
+          input.repo_path = repoContext.repoPath;
+          input.commit = repoContext.commitSha;
+        }
+
         if (options.type) {
           input.symbol_kind = options.type as SymbolKind;
         }
@@ -174,7 +195,7 @@ async function executeFindDef(
       // Check if it's a not-indexed error
       if (result.error?.includes('not indexed') || result.error?.includes('not registered')) {
         exitWithAgentError(
-          AgentErrors.repoNotIndexed(repoContext.repoPath),
+          AgentErrors.repoNotIndexed(repoContext?.repoPath ?? 'unknown'),
           ExitCode.NOT_INDEXED,
           isJson
         );
@@ -191,10 +212,31 @@ async function executeFindDef(
       // Print exact matches
       if (allDefinitions.length > 0) {
         const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
-        console.log(`Found ${allDefinitions.length} exact match(es) for "${symbolName}"${dirtyNote}:\n`);
-        for (const def of allDefinitions) {
-          console.log(formatSymbolInfo(def, true));
-          console.log('');
+        const reposNote = isMultiRepo ? ' (across repos)' : '';
+        console.log(`Found ${allDefinitions.length} exact match(es) for "${symbolName}"${dirtyNote}${reposNote}:\n`);
+
+        if (isMultiRepo) {
+          // Group by repo
+          const byRepo = new Map<string, SymbolInfo[]>();
+          for (const def of allDefinitions) {
+            const repoKey = def.repo_name ?? 'unknown';
+            const existing = byRepo.get(repoKey) ?? [];
+            existing.push(def);
+            byRepo.set(repoKey, existing);
+          }
+
+          for (const [repoName, defs] of byRepo) {
+            console.log(`📦 ${repoName}`);
+            for (const def of defs) {
+              console.log('  ' + formatSymbolInfo(def, true, false));
+              console.log('');
+            }
+          }
+        } else {
+          for (const def of allDefinitions) {
+            console.log(formatSymbolInfo(def, true, false));
+            console.log('');
+          }
         }
       } else if (fuzzyMatches.length > 0) {
         console.log(`No exact matches for "${symbolName}"\n`);
@@ -205,7 +247,7 @@ async function executeFindDef(
         console.log(`Similar matches (fuzzy):\n`);
         for (const match of fuzzyMatches) {
           const similarity = Math.round(match.similarity * 100);
-          console.log(`${formatSymbolInfo(match.symbol, true)}  (${similarity}% similar)`);
+          console.log(`${formatSymbolInfo(match.symbol, true, isMultiRepo)}  (${similarity}% similar)`);
           console.log('');
         }
       }
@@ -229,6 +271,8 @@ export function registerFindDefCommand(program: Command): void {
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
     .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
+    .option('--all-repos', 'Search across all indexed repositories')
+    .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .action(async (symbolName: string, repoPath: string | undefined, options: FindDefOptions) => {
       await executeFindDef(symbolName, repoPath, options);
     });

@@ -72,10 +72,20 @@ export class StructuredQueryEngine {
    */
   async findDefinition(input: FindDefinitionInput): Promise<FindDefinitionOutput> {
     try {
+      // Handle cross-repo search (all repos or filtered by repo_ids)
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.findDefinitionAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return { success: false, definitions: [], error: 'repo_path is required (or use all_repos/repo_ids)' };
+      }
+
       // Resolve commit and get commit ID
       const { commitId, error } = await this.resolveCommit(
         input.repo_path,
-        input.commit
+        input.commit ?? 'HEAD'
       );
       if (error || !commitId) {
         return { success: false, definitions: [], error };
@@ -126,6 +136,66 @@ export class StructuredQueryEngine {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Find definitions across all indexed repositories (or filtered by repo_ids)
+   */
+  private async findDefinitionAllRepos(input: FindDefinitionInput): Promise<FindDefinitionOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return { success: false, definitions: [], error };
+    }
+
+    const allDefinitions: SymbolInfo[] = [];
+    const allFuzzyMatches: FuzzyMatch[] = [];
+
+    for (const repo of repos) {
+      if (input.fuzzy) {
+        const fuzzyOptions: Parameters<typeof this.sqi.findSymbolsWithFuzzy>[2] = {
+          minSimilarity: input.min_similarity ?? 0.3,
+          fuzzyLimit: 10,
+        };
+        if (input.symbol_kind) {
+          fuzzyOptions.kind = input.symbol_kind;
+        }
+        const result = this.sqi.findSymbolsWithFuzzy(repo.commitId, input.symbol_name, fuzzyOptions);
+
+        for (const s of result.exact) {
+          const info = this.symbolRecordToInfo(s);
+          info.repo_name = repo.repoName;
+          info.repo_path = repo.repoPath;
+          allDefinitions.push(info);
+        }
+        for (const f of result.fuzzy) {
+          const info = this.symbolRecordToInfo(f.symbol);
+          info.repo_name = repo.repoName;
+          info.repo_path = repo.repoPath;
+          allFuzzyMatches.push({ symbol: info, similarity: f.similarity });
+        }
+      } else {
+        const symbols = this.sqi.findSymbolsByName(
+          repo.commitId,
+          input.symbol_name,
+          input.symbol_kind
+        );
+        for (const s of symbols) {
+          const info = this.symbolRecordToInfo(s);
+          info.repo_name = repo.repoName;
+          info.repo_path = repo.repoPath;
+          allDefinitions.push(info);
+        }
+      }
+    }
+
+    const output: FindDefinitionOutput = {
+      success: true,
+      definitions: allDefinitions,
+    };
+    if (allFuzzyMatches.length > 0) {
+      output.fuzzy_matches = allFuzzyMatches;
+    }
+    return output;
   }
 
   /**
@@ -190,9 +260,20 @@ export class StructuredQueryEngine {
    */
   async findUsages(input: FindUsagesInput): Promise<FindUsagesOutput> {
     try {
+      // Handle cross-repo search (all repos or filtered by repo_ids)
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.findUsagesAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return { success: false, usages: [], total_count: 0, error: 'repo_path is required (or use all_repos/repo_ids)' };
+      }
+
+      const commitRef = input.commit ?? 'HEAD';
       const { commitId, error, git } = await this.resolveCommit(
         input.repo_path,
-        input.commit
+        commitRef
       );
       if (error || !commitId || !git) {
         return { success: false, usages: [], total_count: 0, error };
@@ -206,7 +287,7 @@ export class StructuredQueryEngine {
           let contextSnippet = '';
           try {
             const { content } = await git.readFileAtCommit(
-              input.commit,
+              commitRef,
               record.file_path
             );
             contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
@@ -293,6 +374,108 @@ export class StructuredQueryEngine {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Find usages across all indexed repositories (or filtered by repo_ids)
+   */
+  private async findUsagesAllRepos(input: FindUsagesInput): Promise<FindUsagesOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return { success: false, usages: [], total_count: 0, error };
+    }
+
+    const allUsages: UsageInfo[] = [];
+    const allFuzzyMatches: FuzzyUsageMatch[] = [];
+
+    for (const repo of repos) {
+      let git: GitAdapter;
+      try {
+        git = await GitAdapter.create(repo.repoPath);
+      } catch {
+        continue; // Skip repos we can't access
+      }
+
+      // Helper to convert usage records to UsageInfo with context
+      const recordsToUsageInfo = async (records: UsageRecord[]): Promise<UsageInfo[]> => {
+        const usages: UsageInfo[] = [];
+        for (const record of records) {
+          let contextSnippet = '';
+          try {
+            const { content } = await git.readFileAtCommit(repo.commitSha, record.file_path);
+            contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
+          } catch {
+            // File might not exist, skip context
+          }
+
+          let enclosingSymbol: string | undefined;
+          if (record.enclosing_symbol_id) {
+            const enclosing = this.sqi.getSymbolById(record.enclosing_symbol_id);
+            if (enclosing) {
+              enclosingSymbol = enclosing.qualified_name;
+            }
+          }
+
+          usages.push({
+            file_path: record.file_path,
+            line: record.line,
+            column: record.column,
+            usage_type: record.usage_type,
+            context_snippet: contextSnippet,
+            enclosing_symbol: enclosingSymbol,
+            repo_name: repo.repoName,
+            repo_path: repo.repoPath,
+          });
+        }
+        return usages;
+      };
+
+      if (input.fuzzy) {
+        const fuzzyOptions: { filePath?: string; minSimilarity?: number; fuzzyLimit?: number } = {
+          minSimilarity: input.min_similarity ?? 0.3,
+          fuzzyLimit: 5,
+        };
+        if (input.file_path) {
+          fuzzyOptions.filePath = input.file_path;
+        }
+
+        const result = this.sqi.findUsagesWithFuzzy(repo.commitId, input.symbol_name, fuzzyOptions);
+        const usages = await recordsToUsageInfo(result.exact);
+        allUsages.push(...usages);
+
+        for (const match of result.fuzzy) {
+          const matchUsages = await recordsToUsageInfo(match.usages);
+          // Add repo info to fuzzy match usages
+          for (const u of matchUsages) {
+            u.repo_name = repo.repoName;
+            u.repo_path = repo.repoPath;
+          }
+          allFuzzyMatches.push({
+            symbol_name: match.symbolName,
+            similarity: match.similarity,
+            usages: matchUsages,
+          });
+        }
+      } else {
+        const usageRecords = this.sqi.findUsagesByName(
+          repo.commitId,
+          input.symbol_name,
+          input.file_path
+        );
+        const usages = await recordsToUsageInfo(usageRecords);
+        allUsages.push(...usages);
+      }
+    }
+
+    const output: FindUsagesOutput = {
+      success: true,
+      usages: allUsages,
+      total_count: allUsages.length,
+    };
+    if (allFuzzyMatches.length > 0) {
+      output.fuzzy_matches = allFuzzyMatches;
+    }
+    return output;
   }
 
   // ==================== Find Hierarchy ====================
@@ -412,9 +595,19 @@ export class StructuredQueryEngine {
    */
   async findImporters(input: FindImportersInput): Promise<FindImportersOutput> {
     try {
+      // Handle cross-repo search (all repos or filtered by repo_ids)
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.findImportersAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return { success: false, importers: [], error: 'repo_path is required (or use all_repos/repo_ids)' };
+      }
+
       const { commitId, error } = await this.resolveCommit(
         input.repo_path,
-        input.commit
+        input.commit ?? 'HEAD'
       );
       if (error || !commitId) {
         return { success: false, importers: [], error: error ?? 'Unknown error resolving commit' };
@@ -448,6 +641,42 @@ export class StructuredQueryEngine {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Find importers across all indexed repositories (or filtered by repo_ids)
+   */
+  private async findImportersAllRepos(input: FindImportersInput): Promise<FindImportersOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return { success: false, importers: [], error };
+    }
+
+    const allImporters: FindImportersOutput['importers'] = [];
+
+    for (const repo of repos) {
+      const importRecords = this.sqi.findImportersByPattern(
+        repo.commitId,
+        `%${input.module}%`
+      );
+
+      for (const record of importRecords) {
+        const bindings = this.sqi.getImportBindings(record.id);
+        allImporters.push({
+          file_path: record.file_path,
+          line: record.line,
+          bindings: bindings.map((b): ImportBindingInfo => ({
+            imported_name: b.imported_name,
+            local_name: b.local_name,
+            is_type_only: b.is_type_only === 1,
+          })),
+          repo_name: repo.repoName,
+          repo_path: repo.repoPath,
+        });
+      }
+    }
+
+    return { success: true, importers: allImporters };
   }
 
   // ==================== File-Level Queries ====================
@@ -573,7 +802,23 @@ export class StructuredQueryEngine {
    */
   async findDeadCode(input: FindDeadCodeInput): Promise<FindDeadCodeOutput> {
     try {
-      const { commitId, error } = await this.resolveCommit(input.repo_path, input.commit);
+      // Handle cross-repo search (all repos or filtered by repo_ids)
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.findDeadCodeAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return {
+          success: false,
+          dead_symbols: [],
+          exported_count: 0,
+          unexported_count: 0,
+          error: 'repo_path is required (or use all_repos/repo_ids)',
+        };
+      }
+
+      const { commitId, error } = await this.resolveCommit(input.repo_path, input.commit ?? 'HEAD');
       if (error || !commitId) {
         return {
           success: false,
@@ -621,12 +866,83 @@ export class StructuredQueryEngine {
   }
 
   /**
+   * Find dead code across all indexed repositories (or filtered by repo_ids)
+   */
+  private async findDeadCodeAllRepos(input: FindDeadCodeInput): Promise<FindDeadCodeOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return {
+        success: false,
+        dead_symbols: [],
+        exported_count: 0,
+        unexported_count: 0,
+        error,
+      };
+    }
+
+    const allDeadSymbols: DeadSymbolInfo[] = [];
+    const limitPerRepo = Math.ceil((input.limit ?? 50) / repos.length);
+
+    for (const repo of repos) {
+      const deadSymbolOptions: { exportedOnly?: boolean; limit?: number } = {
+        limit: limitPerRepo,
+      };
+      if (input.exported_only !== undefined) {
+        deadSymbolOptions.exportedOnly = input.exported_only;
+      }
+
+      const raw = this.sqi.getDeadSymbols(repo.commitId, deadSymbolOptions);
+
+      for (const s of raw) {
+        allDeadSymbols.push({
+          name: s.name,
+          qualified_name: s.qualified_name,
+          kind: s.symbol_kind as SymbolKind,
+          file_path: s.file_path,
+          start_line: s.start_line,
+          end_line: s.end_line,
+          is_exported: s.is_exported ? true : false,
+          repo_name: repo.repoName,
+          repo_path: repo.repoPath,
+        });
+      }
+    }
+
+    // Apply final limit
+    const limitedSymbols = allDeadSymbols.slice(0, input.limit ?? 50);
+
+    return {
+      success: true,
+      dead_symbols: limitedSymbols,
+      exported_count: limitedSymbols.filter((s) => s.is_exported).length,
+      unexported_count: limitedSymbols.filter((s) => !s.is_exported).length,
+    };
+  }
+
+  /**
    * Analyze the impact of changing a symbol.
    * Shows direct usages and transitive impact through the call graph.
    */
   async analyzeChangeImpact(input: ChangeImpactInput): Promise<ChangeImpactOutput> {
     try {
-      const { commitId, error, git } = await this.resolveCommit(input.repo_path, input.commit);
+      // Handle cross-repo search (all repos or filtered by repo_ids)
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.analyzeChangeImpactAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return {
+          success: false,
+          direct_usages: [],
+          transitive_impact: [],
+          total_affected: 0,
+          error: 'repo_path is required (or use all_repos/repo_ids)',
+        };
+      }
+
+      const commitRef = input.commit ?? 'HEAD';
+      const { commitId, error, git } = await this.resolveCommit(input.repo_path, commitRef);
       if (error || !commitId || !git) {
         return {
           success: false,
@@ -660,7 +976,7 @@ export class StructuredQueryEngine {
       for (const record of usageRecords) {
         let contextSnippet = '';
         try {
-          const { content } = await git.readFileAtCommit(input.commit, record.file_path);
+          const { content } = await git.readFileAtCommit(commitRef, record.file_path);
           contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
         } catch {
           // File might not exist, skip context
@@ -724,6 +1040,124 @@ export class StructuredQueryEngine {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Analyze change impact across all indexed repositories (or filtered by repo_ids)
+   */
+  private async analyzeChangeImpactAllRepos(input: ChangeImpactInput): Promise<ChangeImpactOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return {
+        success: false,
+        direct_usages: [],
+        transitive_impact: [],
+        total_affected: 0,
+        error,
+      };
+    }
+
+    // First, find where the symbol is defined (in any repo)
+    let definitionSymbol: SymbolRecord | undefined;
+    let definitionRepo: typeof repos[0] | undefined;
+
+    for (const repo of repos) {
+      const symbols = this.sqi.findSymbolsByName(repo.commitId, input.symbol_name);
+      if (symbols.length > 0) {
+        definitionSymbol = symbols[0];
+        definitionRepo = repo;
+        break;
+      }
+    }
+
+    if (!definitionSymbol || !definitionRepo) {
+      return {
+        success: false,
+        direct_usages: [],
+        transitive_impact: [],
+        total_affected: 0,
+        error: `Symbol not found in any repository: ${input.symbol_name}`,
+      };
+    }
+
+    const symbolInfo = this.symbolRecordToInfo(definitionSymbol);
+    symbolInfo.repo_name = definitionRepo.repoName;
+    symbolInfo.repo_path = definitionRepo.repoPath;
+
+    // Now find usages across ALL repos
+    const allDirectUsages: UsageInfo[] = [];
+    const allTransitiveImpact: ImpactInfo[] = [];
+    const affectedSymbolKeys = new Set<string>();
+
+    for (const repo of repos) {
+      let git: GitAdapter;
+      try {
+        git = await GitAdapter.create(repo.repoPath);
+      } catch {
+        continue;
+      }
+
+      // Find usages of this symbol name in this repo
+      const usageRecords = this.sqi.findUsagesByName(repo.commitId, input.symbol_name);
+
+      for (const record of usageRecords) {
+        let contextSnippet = '';
+        try {
+          const { content } = await git.readFileAtCommit(repo.commitSha, record.file_path);
+          contextSnippet = this.sqi.getContextSnippet(content, record.line, 1);
+        } catch {
+          // File might not exist, skip context
+        }
+
+        let enclosingSymbol: string | undefined;
+        if (record.enclosing_symbol_id) {
+          const enclosing = this.sqi.getSymbolById(record.enclosing_symbol_id);
+          if (enclosing) {
+            enclosingSymbol = enclosing.qualified_name;
+            affectedSymbolKeys.add(`${repo.repoId}:${record.enclosing_symbol_id}`);
+          }
+        }
+
+        allDirectUsages.push({
+          file_path: record.file_path,
+          line: record.line,
+          column: record.column,
+          usage_type: record.usage_type,
+          context_snippet: contextSnippet,
+          enclosing_symbol: enclosingSymbol,
+          repo_name: repo.repoName,
+          repo_path: repo.repoPath,
+        });
+      }
+
+      // Get transitive impact within this repo (if symbol is defined here)
+      if (repo.repoId === definitionRepo.repoId && definitionSymbol) {
+        const maxDepth = input.max_depth ?? 3;
+        const transitiveRaw = this.sqi.getTransitiveImpact(repo.commitId, definitionSymbol.id, maxDepth);
+
+        for (const t of transitiveRaw) {
+          affectedSymbolKeys.add(`${repo.repoId}:${t.symbol_id}`);
+          allTransitiveImpact.push({
+            name: t.name,
+            qualified_name: t.qualified_name,
+            file_path: t.file_path,
+            start_line: t.start_line,
+            depth: t.depth,
+            usage_type: t.usage_type as UsageType,
+            repo_name: repo.repoName,
+            repo_path: repo.repoPath,
+          });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      symbol: symbolInfo,
+      direct_usages: allDirectUsages,
+      transitive_impact: allTransitiveImpact,
+      total_affected: affectedSymbolKeys.size,
+    };
   }
 
   // ==================== Symbol Context ====================
@@ -837,6 +1271,66 @@ export class StructuredQueryEngine {
   }
 
   // ==================== Helper Methods ====================
+
+  /**
+   * Resolve all indexed repositories with their latest commits
+   * Used for cross-repo queries (--all-repos and --repos)
+   *
+   * @param filterRepoIds - Optional list of repo IDs to filter by
+   */
+  private async resolveAllRepos(filterRepoIds?: string[]): Promise<{
+    repos: Array<{
+      repoId: string;
+      repoName: string;
+      repoPath: string;
+      commitId: number;
+      commitSha: string;
+    }>;
+    error?: string;
+  }> {
+    let repos = this.metadata.listRepositories();
+    if (repos.length === 0) {
+      return { repos: [], error: 'No repositories indexed. Run "sourcerack index" first.' };
+    }
+
+    // Filter by repo IDs if provided
+    if (filterRepoIds && filterRepoIds.length > 0) {
+      const filterSet = new Set(filterRepoIds);
+      repos = repos.filter((r) => filterSet.has(r.id));
+      if (repos.length === 0) {
+        return { repos: [], error: 'None of the specified repositories are indexed.' };
+      }
+    }
+
+    const result: Array<{
+      repoId: string;
+      repoName: string;
+      repoPath: string;
+      commitId: number;
+      commitSha: string;
+    }> = [];
+
+    for (const repo of repos) {
+      // Get the latest indexed commit for this repo
+      const commits = this.metadata.listIndexedCommits(repo.id);
+      const latestCommit = commits.find((c) => c.status === 'complete');
+      if (latestCommit) {
+        result.push({
+          repoId: repo.id,
+          repoName: repo.name,
+          repoPath: repo.path,
+          commitId: latestCommit.id,
+          commitSha: latestCommit.commit_sha,
+        });
+      }
+    }
+
+    if (result.length === 0) {
+      return { repos: [], error: 'No completed indexes found. Run "sourcerack index" first.' };
+    }
+
+    return { repos: result };
+  }
 
   /**
    * Resolve commit reference to commit ID

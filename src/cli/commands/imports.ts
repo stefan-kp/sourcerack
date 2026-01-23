@@ -10,6 +10,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { handleError, ExitCode } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { ImportInfo } from '../../sqi/types.js';
+import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
 
 /**
  * Command options
@@ -22,6 +23,8 @@ interface ImportsOptions {
 interface ImportersOptions {
   commit?: string;
   json?: boolean;
+  allRepos?: boolean;
+  repos?: string[];
 }
 
 /**
@@ -140,21 +143,38 @@ async function executeImporters(
   options: ImportersOptions
 ): Promise<void> {
   const isJson = options.json === true;
+  const allRepos = options.allRepos === true;
+  const reposFilter = parseReposOption(options.repos);
+  const isMultiRepo = allRepos || reposFilter.length > 0;
 
   try {
-    // Detect repository context
-    const repoContext = await detectRepoContext(repoPath, options.commit);
+    // For multi-repo search, skip repo context detection
+    let repoContext: { repoPath: string; commitSha: string } | undefined;
+
+    if (!isMultiRepo) {
+      repoContext = await detectRepoContext(repoPath, options.commit);
+    }
 
     // Run with context
     const result = await withContext(
       async (context) => {
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
-        return await queryEngine.findImporters({
-          repo_path: repoContext.repoPath,
-          commit: repoContext.commitSha,
+        const input: Parameters<typeof queryEngine.findImporters>[0] = {
           module: moduleName,
-        });
+        };
+
+        if (allRepos) {
+          input.all_repos = true;
+        } else if (reposFilter.length > 0) {
+          const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
+          input.repo_ids = resolved.repoIds;
+        } else if (repoContext) {
+          input.repo_path = repoContext.repoPath;
+          input.commit = repoContext.commitSha;
+        }
+
+        return await queryEngine.findImporters(input);
       },
       { skipEmbeddings: true, skipVectors: true }
     );
@@ -168,24 +188,56 @@ async function executeImporters(
     } else if (result.importers.length === 0) {
       console.log(`No files import: ${moduleName}`);
     } else {
-      console.log(`\nFiles importing "${moduleName}" (${result.importers.length}):\n`);
+      const reposNote = isMultiRepo ? ' (across repos)' : '';
+      console.log(`\nFiles importing "${moduleName}" (${result.importers.length})${reposNote}:\n`);
 
-      for (const importer of result.importers) {
-        console.log(`📄 ${importer.file_path}:${importer.line}`);
-        if (importer.bindings.length > 0) {
-          const bindings = importer.bindings
-            .map((b) => {
-              let bind = b.imported_name;
-              if (b.local_name !== b.imported_name) {
-                bind += ` as ${b.local_name}`;
-              }
-              return bind;
-            })
-            .join(', ');
-          console.log(`   { ${bindings} }`);
+      if (isMultiRepo) {
+        // Group by repo
+        const byRepo = new Map<string, typeof result.importers>();
+        for (const importer of result.importers) {
+          const repoKey = importer.repo_name ?? 'unknown';
+          const existing = byRepo.get(repoKey) ?? [];
+          existing.push(importer);
+          byRepo.set(repoKey, existing);
         }
+
+        for (const [repoName, importers] of byRepo) {
+          console.log(`📦 ${repoName} (${importers.length} files)`);
+          for (const importer of importers) {
+            console.log(`  📄 ${importer.file_path}:${importer.line}`);
+            if (importer.bindings.length > 0) {
+              const bindings = importer.bindings
+                .map((b) => {
+                  let bind = b.imported_name;
+                  if (b.local_name !== b.imported_name) {
+                    bind += ` as ${b.local_name}`;
+                  }
+                  return bind;
+                })
+                .join(', ');
+              console.log(`     { ${bindings} }`);
+            }
+          }
+          console.log('');
+        }
+      } else {
+        for (const importer of result.importers) {
+          console.log(`📄 ${importer.file_path}:${importer.line}`);
+          if (importer.bindings.length > 0) {
+            const bindings = importer.bindings
+              .map((b) => {
+                let bind = b.imported_name;
+                if (b.local_name !== b.imported_name) {
+                  bind += ` as ${b.local_name}`;
+                }
+                return bind;
+              })
+              .join(', ');
+            console.log(`   { ${bindings} }`);
+          }
+        }
+        console.log('');
       }
-      console.log('');
     }
   } catch (error) {
     handleError(error, isJson);
@@ -220,6 +272,8 @@ export function registerDependentsCommand(program: Command): void {
     .argument('[path]', 'Path to the repository (default: current directory)')
     .option('-c, --commit <ref>', 'Commit to search (default: HEAD)')
     .option('--json', 'Output in JSON format')
+    .option('--all-repos', 'Search across all indexed repositories')
+    .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .action(async (moduleName: string, repoPath: string | undefined, options: ImportersOptions) => {
       await executeImporters(moduleName, repoPath, options);
     });

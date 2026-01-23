@@ -304,14 +304,17 @@ export class MetadataStorage {
   }
 
   /**
-   * List repositories with indexed commit counts
+   * List repositories with indexed commit counts and embedding stats
    */
   listRepositoriesWithStats(): RepositoryWithStats[] {
     return this.db
       .prepare(
-        `SELECT r.*, COUNT(ic.id) as indexed_commit_count
+        `SELECT r.*,
+           COUNT(CASE WHEN ic.status = 'complete' THEN 1 END) as indexed_commit_count,
+           COUNT(CASE WHEN ic.status = 'complete' AND ic.embedding_status = 'complete' THEN 1 END) as embeddings_complete_count,
+           COUNT(CASE WHEN ic.status = 'complete' AND ic.embedding_status = 'none' THEN 1 END) as embeddings_none_count
          FROM repositories r
-         LEFT JOIN indexed_commits ic ON r.id = ic.repo_id AND ic.status = 'complete'
+         LEFT JOIN indexed_commits ic ON r.id = ic.repo_id
          GROUP BY r.id
          ORDER BY r.name`
       )

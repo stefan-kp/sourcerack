@@ -54,10 +54,14 @@ export interface GCCandidateRecord {
 }
 
 /**
- * Repository with indexed commit count
+ * Repository with indexed commit count and embedding stats
  */
 export interface RepositoryWithStats extends RepositoryRecord {
   indexed_commit_count: number;
+  /** Number of commits with embeddings (embedding_status = 'complete') */
+  embeddings_complete_count: number;
+  /** Number of commits without embeddings (embedding_status = 'none') */
+  embeddings_none_count: number;
 }
 
 /**

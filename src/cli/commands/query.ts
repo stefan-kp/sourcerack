@@ -10,6 +10,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { formatQueryResults, type QueryOutputDisplay, type QueryResultDisplay } from '../output.js';
 import { handleError, ExitCode, AgentErrors, exitWithAgentError } from '../errors.js';
 import { createQueryOrchestrator } from '../../indexer/query.js';
+import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
 
 /**
  * Query command options
@@ -20,6 +21,8 @@ interface QueryOptions {
   language?: string;
   pathPattern?: string;
   json?: boolean;
+  allRepos?: boolean;
+  repos?: string[];
 }
 
 /**
@@ -27,11 +30,11 @@ interface QueryOptions {
  */
 async function executeQuery(searchQuery: string, repoPath: string | undefined, options: QueryOptions): Promise<void> {
   const isJson = options.json === true;
+  const allRepos = options.allRepos === true;
+  const reposFilter = parseReposOption(options.repos);
+  const isMultiRepo = allRepos || reposFilter.length > 0;
 
   try {
-    // Detect repository context
-    const repoContext = await detectRepoContext(repoPath, options.commit);
-
     // Parse limit
     const limit = options.limit !== undefined ? parseInt(options.limit, 10) : 10;
     if (isNaN(limit) || limit < 1) {
@@ -39,18 +42,15 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
       process.exit(ExitCode.INVALID_ARGS);
     }
 
+    // For multi-repo search, skip repo context detection
+    let repoContext: { repoPath: string; commitSha: string } | undefined;
+
+    if (!isMultiRepo) {
+      repoContext = await detectRepoContext(repoPath, options.commit);
+    }
+
     // Run with context
     const output = await withContext(async (context) => {
-      // Get repository record
-      const repo = context.metadata.getRepositoryByPath(repoContext.repoPath);
-      if (repo === null) {
-        exitWithAgentError(
-          AgentErrors.repoNotIndexed(repoContext.repoPath),
-          ExitCode.NOT_INDEXED,
-          isJson
-        );
-      }
-
       // Create query orchestrator
       const queryOrchestrator = createQueryOrchestrator(
         context.metadata,
@@ -58,17 +58,101 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
         context.embeddings
       );
 
+      if (isMultiRepo) {
+        // Cross-repo search: query specified or all indexed repositories
+        let repos = context.metadata.listRepositories();
+
+        // Filter by --repos if specified
+        if (reposFilter.length > 0) {
+          const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
+          const filterSet = new Set(resolved.repoIds);
+          repos = repos.filter((r) => filterSet.has(r.id));
+        }
+        if (repos.length === 0) {
+          return {
+            success: false,
+            indexed: false,
+            results: [],
+            totalCount: 0,
+            error: 'No repositories indexed. Run "sourcerack index" first.',
+          } as QueryOutputDisplay;
+        }
+
+        const allResults: QueryResultDisplay[] = [];
+        let anyIndexed = false;
+        const limitPerRepo = Math.ceil(limit / repos.length);
+
+        for (const repo of repos) {
+          // Get latest indexed commit
+          const commits = context.metadata.listIndexedCommits(repo.id);
+          const latestCommit = commits.find((c: { status: string }) => c.status === 'complete');
+          if (!latestCommit) continue;
+
+          anyIndexed = true;
+
+          const queryOptions: Parameters<typeof queryOrchestrator.query>[0] = {
+            repoId: repo.id,
+            commitSha: latestCommit.commit_sha,
+            query: searchQuery,
+            limit: limitPerRepo,
+          };
+          if (options.language !== undefined) {
+            queryOptions.language = options.language;
+          }
+          if (options.pathPattern !== undefined) {
+            queryOptions.pathPattern = options.pathPattern;
+          }
+
+          try {
+            const result = await queryOrchestrator.query(queryOptions);
+            if (result.success) {
+              for (const r of result.results) {
+                allResults.push({
+                  id: r.id,
+                  score: r.score,
+                  path: r.path,
+                  symbol: r.symbol,
+                  symbolType: r.symbolType,
+                  language: r.language,
+                  startLine: r.startLine,
+                  endLine: r.endLine,
+                  content: r.content,
+                  repoName: repo.name,
+                  repoPath: repo.path,
+                });
+              }
+            }
+          } catch {
+            // Skip repos that fail (might not have embeddings)
+          }
+        }
+
+        // Sort by score and apply final limit
+        allResults.sort((a, b) => b.score - a.score);
+        const limitedResults = allResults.slice(0, limit);
+
+        return {
+          success: anyIndexed,
+          indexed: anyIndexed,
+          results: limitedResults,
+          totalCount: allResults.length,
+        } as QueryOutputDisplay;
+      }
+
+      // Single repo search
+      const repo = context.metadata.getRepositoryByPath(repoContext!.repoPath);
+      if (repo === null) {
+        exitWithAgentError(
+          AgentErrors.repoNotIndexed(repoContext!.repoPath),
+          ExitCode.NOT_INDEXED,
+          isJson
+        );
+      }
+
       // Build query options
-      const queryOptions: {
-        repoId: string;
-        commitSha: string;
-        query: string;
-        limit?: number;
-        language?: string;
-        pathPattern?: string;
-      } = {
+      const queryOptions: Parameters<typeof queryOrchestrator.query>[0] = {
         repoId: repo.id,
-        commitSha: repoContext.commitSha,
+        commitSha: repoContext!.commitSha,
         query: searchQuery,
         limit,
       };
@@ -111,7 +195,7 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
     // Handle not indexed case with agent-friendly error
     if (!output.indexed) {
       exitWithAgentError(
-        AgentErrors.repoNotIndexed(repoContext.repoPath),
+        AgentErrors.repoNotIndexed(repoContext?.repoPath ?? 'unknown'),
         ExitCode.NOT_INDEXED,
         isJson
       );
@@ -127,7 +211,7 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
     }
 
     // Format and output results
-    formatQueryResults(output, { json: isJson });
+    formatQueryResults(output, { json: isJson, allRepos: isMultiRepo });
 
     // Exit with appropriate code
     if (!output.success) {
@@ -152,6 +236,8 @@ export function registerQueryCommand(program: Command): void {
     .option('-l, --language <lang>', 'Filter by programming language')
     .option('--path-pattern <pattern>', 'Filter by path pattern (e.g., "src/api/*")')
     .option('--json', 'Output in JSON format')
+    .option('--all-repos', 'Search across all indexed repositories')
+    .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .action(async (searchQuery: string, repoPath: string | undefined, options: QueryOptions) => {
       await executeQuery(searchQuery, repoPath, options);
     });

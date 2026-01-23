@@ -24,6 +24,10 @@ export interface RepoDisplayInfo {
   name: string;
   path: string;
   indexedCommitCount: number;
+  /** Number of commits with embeddings */
+  embeddingsCompleteCount: number;
+  /** Number of commits without embeddings (SQI only) */
+  embeddingsNoneCount: number;
 }
 
 /**
@@ -50,6 +54,10 @@ export interface QueryResultDisplay {
   startLine: number;
   endLine: number;
   content: string;
+  /** Repository name (populated in cross-repo queries) */
+  repoName?: string;
+  /** Repository path (populated in cross-repo queries) */
+  repoPath?: string;
 }
 
 /**
@@ -125,9 +133,17 @@ export function formatIndexResult(result: IndexingResult, options: OutputOptions
 }
 
 /**
+ * Extended output options for query
+ */
+export interface QueryOutputOptions extends OutputOptions {
+  /** Whether this is a cross-repo search */
+  allRepos?: boolean;
+}
+
+/**
  * Format query results for output
  */
-export function formatQueryResults(output: QueryOutputDisplay, options: OutputOptions): void {
+export function formatQueryResults(output: QueryOutputDisplay, options: QueryOutputOptions): void {
   if (options.json === true) {
     console.log(JSON.stringify(output, null, 2));
     return;
@@ -148,12 +164,14 @@ export function formatQueryResults(output: QueryOutputDisplay, options: OutputOp
     return;
   }
 
-  console.log(`Found ${String(output.totalCount)} result(s):\n`);
+  const reposNote = options.allRepos ? ' (across all repos)' : '';
+  console.log(`Found ${String(output.totalCount)} result(s)${reposNote}:\n`);
 
   for (const result of output.results) {
     const scorePercent = (result.score * 100).toFixed(1);
+    const repoPrefix = options.allRepos && result.repoName ? `[${result.repoName}] ` : '';
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    console.log(`📄 ${result.path}:${String(result.startLine)}-${String(result.endLine)}`);
+    console.log(`📄 ${repoPrefix}${result.path}:${String(result.startLine)}-${String(result.endLine)}`);
     console.log(`   ${result.symbolType}: ${result.symbol} (${result.language}) [${scorePercent}%]`);
     console.log('');
     // Indent content
@@ -261,6 +279,20 @@ export function formatRepositories(repos: RepoDisplayInfo[], options: OutputOpti
     console.log(`   Path: ${repo.path}`);
     console.log(`   ID: ${repo.id}`);
     console.log(`   Indexed commits: ${String(repo.indexedCommitCount)}`);
+
+    // Show index type breakdown
+    if (repo.indexedCommitCount > 0) {
+      const parts: string[] = [];
+      if (repo.embeddingsNoneCount > 0) {
+        parts.push(`${String(repo.embeddingsNoneCount)} SQI only`);
+      }
+      if (repo.embeddingsCompleteCount > 0) {
+        parts.push(`${String(repo.embeddingsCompleteCount)} with embeddings`);
+      }
+      if (parts.length > 0) {
+        console.log(`   Index types: ${parts.join(', ')}`);
+      }
+    }
     console.log('');
   }
 }

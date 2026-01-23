@@ -34,6 +34,8 @@ async function executeRepos(options: ReposOptions): Promise<void> {
           name: r.name,
           path: r.path,
           indexedCommitCount: r.indexed_commit_count,
+          embeddingsCompleteCount: r.embeddings_complete_count,
+          embeddingsNoneCount: r.embeddings_none_count,
         }));
 
         formatRepositories(displayRepos, { json: isJson });

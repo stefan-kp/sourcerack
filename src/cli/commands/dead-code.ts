@@ -11,6 +11,7 @@ import { detectRepoContext } from '../git-detect.js';
 import { handleError } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { FindDeadCodeOutput, DeadSymbolInfo } from '../../sqi/types.js';
+import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
 
 /**
  * Dead code command options
@@ -21,6 +22,8 @@ interface DeadCodeOptions {
   exported?: boolean;
   limit?: number;
   excludeTests?: boolean;
+  allRepos?: boolean;
+  repos?: string[];
 }
 
 /**
@@ -88,7 +91,7 @@ function categorizeSymbols(symbols: DeadSymbolInfo[], excludeTests: boolean): Ca
 /**
  * Format dead code results for human-readable output
  */
-function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean): void {
+function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean, isMultiRepo: boolean): void {
   if (!result.success) {
     console.error(`Error: ${result.error ?? 'Unknown error'}`);
     process.exit(1);
@@ -110,13 +113,14 @@ function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean): void
     return;
   }
 
-  console.log('\n=== Dead Code Detection ===\n');
+  const reposNote = isMultiRepo ? ' (across repos)' : '';
+  console.log(`\n=== Dead Code Detection${reposNote} ===\n`);
 
   // Dead callable code (functions, methods, classes)
   if (categorized.deadCode.length > 0) {
     console.log(`\x1b[31m■ Unused Code (${categorized.deadCode.length})\x1b[0m`);
     console.log('  Functions, methods, and classes that are never called:');
-    formatSymbolList(categorized.deadCode);
+    formatSymbolList(categorized.deadCode, isMultiRepo);
   }
 
   // Unused type definitions
@@ -124,7 +128,7 @@ function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean): void
     if (categorized.deadCode.length > 0) console.log('');
     console.log(`\x1b[33m■ Unused Type Definitions (${categorized.unusedTypes.length})\x1b[0m`);
     console.log('  Interfaces and type aliases with no references (may be public API):');
-    formatSymbolList(categorized.unusedTypes);
+    formatSymbolList(categorized.unusedTypes, isMultiRepo);
   }
 
   // Test fixtures
@@ -132,7 +136,7 @@ function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean): void
     if (categorized.deadCode.length > 0 || categorized.unusedTypes.length > 0) console.log('');
     console.log(`\x1b[36m■ Test Fixtures (${categorized.testFixtures.length})\x1b[0m`);
     console.log('  Symbols in test files (expected, used for testing):');
-    formatSymbolList(categorized.testFixtures);
+    formatSymbolList(categorized.testFixtures, isMultiRepo);
   }
 
   // Summary
@@ -152,10 +156,29 @@ function formatDeadCode(result: FindDeadCodeOutput, excludeTests: boolean): void
 /**
  * Format a list of symbols
  */
-function formatSymbolList(symbols: DeadSymbolInfo[]): void {
-  for (const s of symbols) {
-    const kindLabel = `[${s.kind}]`.padEnd(12);
-    console.log(`   ${s.file_path}:${s.start_line}  ${kindLabel} ${s.name}`);
+function formatSymbolList(symbols: DeadSymbolInfo[], showRepo: boolean = false): void {
+  if (showRepo) {
+    // Group by repo
+    const byRepo = new Map<string, DeadSymbolInfo[]>();
+    for (const s of symbols) {
+      const repoKey = s.repo_name ?? 'unknown';
+      const existing = byRepo.get(repoKey) ?? [];
+      existing.push(s);
+      byRepo.set(repoKey, existing);
+    }
+
+    for (const [repoName, repoSymbols] of byRepo) {
+      console.log(`   📦 ${repoName}:`);
+      for (const s of repoSymbols) {
+        const kindLabel = `[${s.kind}]`.padEnd(12);
+        console.log(`      ${s.file_path}:${s.start_line}  ${kindLabel} ${s.name}`);
+      }
+    }
+  } else {
+    for (const s of symbols) {
+      const kindLabel = `[${s.kind}]`.padEnd(12);
+      console.log(`   ${s.file_path}:${s.start_line}  ${kindLabel} ${s.name}`);
+    }
   }
 }
 
@@ -164,25 +187,35 @@ function formatSymbolList(symbols: DeadSymbolInfo[]): void {
  */
 async function executeDeadCode(path: string | undefined, options: DeadCodeOptions): Promise<void> {
   const isJson = options.json === true;
+  const allRepos = options.allRepos === true;
+  const reposFilter = parseReposOption(options.repos);
+  const isMultiRepo = allRepos || reposFilter.length > 0;
 
   try {
-    // Detect repository context
-    const repoContext = await detectRepoContext(path, options.commit);
+    // For multi-repo search, skip repo context detection
+    let repoContext: { repoPath: string; commitSha: string } | undefined;
+
+    if (!isMultiRepo) {
+      repoContext = await detectRepoContext(path, options.commit);
+    }
 
     // Run with context
     await withContext(
       async (context) => {
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
-        const findDeadCodeInput: {
-          repo_path: string;
-          commit: string;
-          exported_only?: boolean;
-          limit?: number;
-        } = {
-          repo_path: repoContext.repoPath,
-          commit: repoContext.commitSha,
-        };
+        const findDeadCodeInput: Parameters<typeof queryEngine.findDeadCode>[0] = {};
+
+        if (allRepos) {
+          findDeadCodeInput.all_repos = true;
+        } else if (reposFilter.length > 0) {
+          const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
+          findDeadCodeInput.repo_ids = resolved.repoIds;
+        } else if (repoContext) {
+          findDeadCodeInput.repo_path = repoContext.repoPath;
+          findDeadCodeInput.commit = repoContext.commitSha;
+        }
+
         if (options.exported !== undefined) {
           findDeadCodeInput.exported_only = options.exported;
         }
@@ -201,7 +234,7 @@ async function executeDeadCode(path: string | undefined, options: DeadCodeOption
         if (isJson) {
           console.log(JSON.stringify(result, null, 2));
         } else {
-          formatDeadCode(result, options.excludeTests ?? false);
+          formatDeadCode(result, options.excludeTests ?? false, isMultiRepo);
         }
       },
       { skipEmbeddings: true, skipVectors: true }
@@ -224,6 +257,8 @@ export function registerDeadCodeCommand(program: Command): void {
     .option('--limit <n>', 'Maximum number of results', parseInt)
     .option('--exclude-tests', 'Exclude test files and fixtures from results')
     .option('--json', 'Output in JSON format')
+    .option('--all-repos', 'Search across all indexed repositories')
+    .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .action(async (path: string | undefined, options: DeadCodeOptions) => {
       await executeDeadCode(path, options);
     });

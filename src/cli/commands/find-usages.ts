@@ -11,6 +11,7 @@ import { handleError, ExitCode } from '../errors.js';
 import { createStructuredQueryEngine } from '../../sqi/query.js';
 import type { UsageInfo, ExtractedUsage, FuzzyUsageMatch } from '../../sqi/types.js';
 import { getDirtySymbols, flattenDirtyUsages } from '../../dirty/index.js';
+import { parseReposOption, resolveRepoIdentifiers } from '../repo-filter.js';
 
 /**
  * Command options
@@ -21,13 +22,16 @@ interface FindUsagesOptions {
   json?: boolean;
   dirty?: boolean;
   fuzzy?: boolean;
+  allRepos?: boolean;
+  repos?: string[];
 }
 
 /**
  * Format usage info for display
  */
-function formatUsageInfo(usage: UsageInfo): string {
-  const location = `${usage.file_path}:${usage.line}:${usage.column}`;
+function formatUsageInfo(usage: UsageInfo, showRepo = false): string {
+  const repoPrefix = showRepo && usage.repo_name ? `[${usage.repo_name}] ` : '';
+  const location = `${repoPrefix}${usage.file_path}:${usage.line}:${usage.column}`;
   const typeBadge = `[${usage.usage_type}]`;
 
   let line = `${location}  ${typeBadge}`;
@@ -68,16 +72,23 @@ async function executeFindUsages(
 ): Promise<void> {
   const isJson = options.json === true;
   const includeDirty = options.dirty ?? true; // Default: include dirty files
+  const allRepos = options.allRepos === true;
+  const reposFilter = parseReposOption(options.repos);
+  const isMultiRepo = allRepos || reposFilter.length > 0;
 
   try {
-    // Detect repository context
-    const repoContext = await detectRepoContext(repoPath, options.commit);
+    // For multi-repo search, skip repo context detection
+    let repoContext: { repoPath: string; commitSha: string } | undefined;
 
-    // Get dirty file usages if enabled
+    if (!isMultiRepo) {
+      repoContext = await detectRepoContext(repoPath, options.commit);
+    }
+
+    // Get dirty file usages if enabled (only for single repo)
     let dirtyUsages: UsageInfo[] = [];
     let dirtyFilePaths = new Set<string>();
 
-    if (includeDirty) {
+    if (includeDirty && repoContext) {
       try {
         const dirty = await getDirtySymbols(repoContext.repoPath);
         dirtyFilePaths = dirty.dirtyFilePaths;
@@ -102,10 +113,19 @@ async function executeFindUsages(
         const queryEngine = createStructuredQueryEngine(context.metadata);
 
         const input: Parameters<typeof queryEngine.findUsages>[0] = {
-          repo_path: repoContext.repoPath,
-          commit: repoContext.commitSha,
           symbol_name: symbolName,
         };
+
+        if (allRepos) {
+          input.all_repos = true;
+        } else if (reposFilter.length > 0) {
+          const resolved = resolveRepoIdentifiers(context.metadata, reposFilter);
+          input.repo_ids = resolved.repoIds;
+        } else if (repoContext) {
+          input.repo_path = repoContext.repoPath;
+          input.commit = repoContext.commitSha;
+        }
+
         if (options.file) {
           input.file_path = options.file;
         }
@@ -164,22 +184,54 @@ async function executeFindUsages(
       // Print exact matches
       if (allUsages.length > 0) {
         const dirtyNote = dirtyFilePaths.size > 0 ? ` (including ${dirtyFilePaths.size} uncommitted file(s))` : '';
-        console.log(`Found ${allUsages.length} exact usage(s) of "${symbolName}"${dirtyNote}:\n`);
+        const reposNote = isMultiRepo ? ' (across repos)' : '';
+        console.log(`Found ${allUsages.length} exact usage(s) of "${symbolName}"${dirtyNote}${reposNote}:\n`);
 
-        // Group by file
-        const byFile = new Map<string, UsageInfo[]>();
-        for (const usage of allUsages) {
-          const existing = byFile.get(usage.file_path) ?? [];
-          existing.push(usage);
-          byFile.set(usage.file_path, existing);
-        }
-
-        for (const [filePath, usages] of byFile) {
-          console.log(`📄 ${filePath} (${usages.length} usages)`);
-          for (const usage of usages) {
-            console.log(formatUsageInfo(usage));
+        // Group by repo (if multi-repo) then by file
+        if (isMultiRepo) {
+          const byRepo = new Map<string, UsageInfo[]>();
+          for (const usage of allUsages) {
+            const repoKey = usage.repo_name ?? 'unknown';
+            const existing = byRepo.get(repoKey) ?? [];
+            existing.push(usage);
+            byRepo.set(repoKey, existing);
           }
-          console.log('');
+
+          for (const [repoName, repoUsages] of byRepo) {
+            console.log(`📦 ${repoName} (${repoUsages.length} usages)`);
+
+            // Group by file within repo
+            const byFile = new Map<string, UsageInfo[]>();
+            for (const usage of repoUsages) {
+              const existing = byFile.get(usage.file_path) ?? [];
+              existing.push(usage);
+              byFile.set(usage.file_path, existing);
+            }
+
+            for (const [filePath, usages] of byFile) {
+              console.log(`  📄 ${filePath} (${usages.length} usages)`);
+              for (const usage of usages) {
+                console.log('  ' + formatUsageInfo(usage, false));
+              }
+            }
+            console.log('');
+          }
+        } else {
+          // Group by file
+          const byFile = new Map<string, UsageInfo[]>();
+          for (const usage of allUsages) {
+            const existing = byFile.get(usage.file_path) ?? [];
+            existing.push(usage);
+            byFile.set(usage.file_path, existing);
+          }
+
+          for (const [filePath, usages] of byFile) {
+            console.log(`📄 ${filePath} (${usages.length} usages)`);
+            for (const usage of usages) {
+              console.log(formatUsageInfo(usage, false));
+            }
+            console.log('');
+          }
         }
       } else if (options.fuzzy) {
         console.log(`No exact usages found for "${symbolName}"\n`);
@@ -235,6 +287,8 @@ export function registerFindUsagesCommand(program: Command): void {
     .option('--json', 'Output in JSON format')
     .option('--no-dirty', 'Exclude uncommitted changes from results')
     .option('--fuzzy', 'Include fuzzy matches (similar symbol names)')
+    .option('--all-repos', 'Search across all indexed repositories')
+    .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .action(async (symbolName: string, repoPath: string | undefined, options: FindUsagesOptions) => {
       await executeFindUsages(symbolName, repoPath, options);
     });
