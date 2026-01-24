@@ -72,6 +72,7 @@ sourcerack query "error handling in API routes"
 | `sourcerack hierarchy <symbol>` | Show class inheritance tree |
 | `sourcerack dependencies <file>` | Show file imports |
 | `sourcerack dependents <module>` | Show who imports a module |
+| `sourcerack endpoints` | List API endpoints |
 | `sourcerack impact <symbol>` | Analyze change impact |
 | `sourcerack dead-code` | Find unused code |
 | `sourcerack query <search>` | Semantic search |
@@ -157,6 +158,58 @@ Groups are stored in `~/.sourcerack/config.json` and can be manually edited:
   },
   "defaultGroup": "myproject"
 }
+```
+
+### API Endpoint Discovery
+
+Automatically find and list HTTP endpoints across your codebase:
+
+```bash
+# List all endpoints
+sourcerack endpoints
+
+# Filter by HTTP method
+sourcerack endpoints --method GET
+sourcerack endpoints --method POST
+
+# Filter by path pattern
+sourcerack endpoints --path "/api/users*"
+sourcerack endpoints --path "*/auth/*"
+
+# Filter by framework
+sourcerack endpoints --framework express
+sourcerack endpoints --framework rails
+
+# Combine filters
+sourcerack endpoints --method POST --path "/api/*" --framework fastapi
+
+# Search across repos
+sourcerack endpoints --all-repos
+sourcerack endpoints --group backend-services
+```
+
+**Supported Frameworks:**
+
+| Language | Frameworks |
+|----------|------------|
+| JavaScript/TypeScript | Express, Fastify, Koa, NestJS |
+| Python | Flask, FastAPI, Django |
+| Ruby | Rails, Sinatra |
+| MCP | Tool definitions |
+
+**Example Output:**
+```
+[GET] /api/users  (express)
+    └─ src/routes/users.ts:15
+    └─ handler: listUsers
+
+[POST] /api/users  (express)
+    └─ src/routes/users.ts:42
+    └─ handler: createUser
+
+[GET] /api/users/:id  (express)
+    └─ src/routes/users.ts:67
+    └─ handler: getUserById
 ```
 
 ## Configuration
