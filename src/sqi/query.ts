@@ -50,6 +50,13 @@ import {
   ChangeImpactOutput,
   ImpactInfo,
 } from './types.js';
+import {
+  FindEndpointsInput,
+  FindEndpointsOutput,
+  EndpointInfo,
+  EndpointRecord,
+  EndpointParam,
+} from './extractors/api/types.js';
 
 /**
  * Structured Query Engine
@@ -1270,6 +1277,182 @@ export class StructuredQueryEngine {
     }
   }
 
+  // ==================== API Endpoints ====================
+
+  /**
+   * Find API endpoints in the codebase
+   */
+  async findEndpoints(input: FindEndpointsInput): Promise<FindEndpointsOutput> {
+    try {
+      // Handle cross-repo search
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.findEndpointsAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return {
+          success: false,
+          endpoints: [],
+          total_count: 0,
+          error: 'repo_path is required (or use all_repos/repo_ids)',
+        };
+      }
+
+      const { commitId, error } = await this.resolveCommit(
+        input.repo_path,
+        input.commit ?? 'HEAD'
+      );
+      if (error || !commitId) {
+        return { success: false, endpoints: [], total_count: 0, error };
+      }
+
+      // Build query options
+      const options: Parameters<typeof this.sqi.findEndpoints>[1] = {};
+      if (input.method) {
+        options.method = input.method;
+      }
+      if (input.path_pattern) {
+        // Convert glob-like pattern to SQL LIKE pattern
+        options.pathPattern = input.path_pattern.replace(/\*/g, '%');
+      }
+      if (input.framework) {
+        options.framework = input.framework;
+      }
+
+      const records = this.sqi.findEndpoints(commitId, options);
+      const endpoints = records.map((r) => this.endpointRecordToInfo(r));
+
+      return {
+        success: true,
+        endpoints,
+        total_count: endpoints.length,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        endpoints: [],
+        total_count: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Find endpoints across all indexed repositories
+   */
+  private async findEndpointsAllRepos(input: FindEndpointsInput): Promise<FindEndpointsOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return { success: false, endpoints: [], total_count: 0, error };
+    }
+
+    const allEndpoints: EndpointInfo[] = [];
+
+    for (const repo of repos) {
+      const options: Parameters<typeof this.sqi.findEndpoints>[1] = {};
+      if (input.method) {
+        options.method = input.method;
+      }
+      if (input.path_pattern) {
+        options.pathPattern = input.path_pattern.replace(/\*/g, '%');
+      }
+      if (input.framework) {
+        options.framework = input.framework;
+      }
+
+      const records = this.sqi.findEndpoints(repo.commitId, options);
+      for (const record of records) {
+        const info = this.endpointRecordToInfo(record);
+        info.repo_name = repo.repoName;
+        info.repo_path = repo.repoPath;
+        allEndpoints.push(info);
+      }
+    }
+
+    return {
+      success: true,
+      endpoints: allEndpoints,
+      total_count: allEndpoints.length,
+    };
+  }
+
+  /**
+   * Get API endpoint statistics for a repository
+   */
+  async getEndpointStats(
+    repoPath: string,
+    commit: string = 'HEAD'
+  ): Promise<{
+    success: boolean;
+    total?: number;
+    by_method?: { method: string; count: number }[];
+    by_framework?: { framework: string; count: number }[];
+    error?: string;
+  }> {
+    try {
+      const { commitId, error: resolveError } = await this.resolveCommit(repoPath, commit);
+      if (resolveError || !commitId) {
+        const result: { success: false; error?: string } = { success: false };
+        if (resolveError) result.error = resolveError;
+        return result;
+      }
+
+      const stats = this.sqi.getEndpointStats(commitId);
+
+      return {
+        success: true,
+        ...stats,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Convert EndpointRecord to EndpointInfo
+   */
+  private endpointRecordToInfo(record: EndpointRecord): EndpointInfo {
+    // Parse JSON arrays
+    const tags = record.tags ? JSON.parse(record.tags) as string[] : [];
+    const middleware = record.middleware ? JSON.parse(record.middleware) as string[] : [];
+
+    // Get parameters
+    const paramRecords = this.sqi.getEndpointParams(record.id);
+    const params: EndpointParam[] = paramRecords.map((p) => ({
+      name: p.name,
+      location: p.location,
+      type: p.param_type ?? undefined,
+      required: p.required === 1,
+      default_value: p.default_value ?? undefined,
+      description: p.description ?? undefined,
+    }));
+
+    return {
+      http_method: record.http_method,
+      path: record.path,
+      file_path: record.file_path,
+      start_line: record.start_line,
+      end_line: record.end_line,
+      framework: record.framework,
+      handler_name: record.handler_symbol_id
+        ? this.sqi.getSymbolById(record.handler_symbol_id)?.name
+        : undefined,
+      handler_type: record.handler_type,
+      summary: record.summary ?? undefined,
+      description: record.description ?? undefined,
+      tags,
+      middleware,
+      params,
+      response_model: record.response_model ?? undefined,
+      response_status: record.response_status ?? undefined,
+      body_schema: record.body_schema ?? undefined,
+    };
+  }
+
   // ==================== Helper Methods ====================
 
   /**
@@ -1279,13 +1462,13 @@ export class StructuredQueryEngine {
    * @param filterRepoIds - Optional list of repo IDs to filter by
    */
   private async resolveAllRepos(filterRepoIds?: string[]): Promise<{
-    repos: Array<{
+    repos: {
       repoId: string;
       repoName: string;
       repoPath: string;
       commitId: number;
       commitSha: string;
-    }>;
+    }[];
     error?: string;
   }> {
     let repos = this.metadata.listRepositories();
@@ -1302,13 +1485,13 @@ export class StructuredQueryEngine {
       }
     }
 
-    const result: Array<{
+    const result: {
       repoId: string;
       repoName: string;
       repoPath: string;
       commitId: number;
       commitSha: string;
-    }> = [];
+    }[] = [];
 
     for (const repo of repos) {
       // Get the latest indexed commit for this repo

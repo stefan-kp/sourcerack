@@ -10,6 +10,11 @@ import { ExtractorRegistry, getExtractorRegistry } from './extractors/registry.j
 import { createUsageLinker } from './linker/usage-linker.js';
 import { FileExtractionResult, ExtractedSymbol, ExtractedUsage, ExtractedImport } from './types.js';
 import { detectLanguage } from '../parser/tree-sitter.js';
+import {
+  EndpointExtractorRegistry,
+  getEndpointExtractorRegistry,
+  ExtractedEndpoint,
+} from './extractors/api/index.js';
 
 /**
  * Options for SQI indexing
@@ -21,6 +26,8 @@ export interface SQIIndexingOptions {
   commitId: number;
   /** Whether to link usages after extraction */
   linkUsages?: boolean;
+  /** Whether to extract API endpoints */
+  extractEndpoints?: boolean;
 }
 
 /**
@@ -37,6 +44,8 @@ export interface SQIIndexingResult {
   usagesExtracted: number;
   /** Number of imports extracted */
   importsExtracted: number;
+  /** Number of API endpoints extracted */
+  endpointsExtracted: number;
   /** Number of files that failed extraction */
   filesFailed: number;
   /** Error message if failed */
@@ -61,10 +70,12 @@ export type SQIProgressCallback = (event: {
 export class SQIIndexer {
   private sqi: SQIStorage;
   private registry: ExtractorRegistry;
+  private endpointRegistry: EndpointExtractorRegistry;
 
   constructor(sqi: SQIStorage, registry?: ExtractorRegistry) {
     this.sqi = sqi;
     this.registry = registry ?? getExtractorRegistry();
+    this.endpointRegistry = getEndpointExtractorRegistry();
   }
 
   /**
@@ -79,12 +90,13 @@ export class SQIIndexer {
     options: SQIIndexingOptions,
     onProgress?: SQIProgressCallback
   ): Promise<SQIIndexingResult> {
-    const { repoId, commitId, linkUsages = true } = options;
+    const { repoId, commitId, linkUsages = true, extractEndpoints = true } = options;
 
     let filesProcessed = 0;
     let symbolsExtracted = 0;
     let usagesExtracted = 0;
     let importsExtracted = 0;
+    let endpointsExtracted = 0;
     let filesFailed = 0;
 
     try {
@@ -128,6 +140,28 @@ export class SQIIndexer {
             // Store imports
             const importIds = this.storeImports(commitId, result.imports);
             importsExtracted += importIds.length;
+
+            // Extract and store API endpoints if enabled
+            if (extractEndpoints) {
+              const imports = result.imports.map(i => i.module_specifier);
+              if (this.endpointRegistry.mightHaveEndpoints(file.path, language, imports)) {
+                try {
+                  const endpointResult = await this.endpointRegistry.extract(
+                    file.path,
+                    file.content,
+                    language,
+                    imports
+                  );
+
+                  if (endpointResult.success && endpointResult.endpoints.length > 0) {
+                    const endpointIds = this.storeEndpoints(commitId, endpointResult.endpoints);
+                    endpointsExtracted += endpointIds.length;
+                  }
+                } catch {
+                  // Endpoint extraction is optional - don't fail the whole file
+                }
+              }
+            }
           } else {
             filesFailed++;
             // Log parse failures for visibility
@@ -184,6 +218,7 @@ export class SQIIndexer {
         symbolsExtracted,
         usagesExtracted,
         importsExtracted,
+        endpointsExtracted,
         filesFailed,
       };
     } catch (error) {
@@ -193,6 +228,7 @@ export class SQIIndexer {
         symbolsExtracted,
         usagesExtracted,
         importsExtracted,
+        endpointsExtracted,
         filesFailed,
         error: error instanceof Error ? error.message : String(error),
       };
@@ -283,6 +319,17 @@ export class SQIIndexer {
   ): number[] {
     if (imports.length === 0) return [];
     return this.sqi.insertImports(commitId, imports);
+  }
+
+  /**
+   * Store extracted API endpoints
+   */
+  private storeEndpoints(
+    commitId: number,
+    endpoints: ExtractedEndpoint[]
+  ): number[] {
+    if (endpoints.length === 0) return [];
+    return this.sqi.insertEndpoints(commitId, endpoints);
   }
 }
 

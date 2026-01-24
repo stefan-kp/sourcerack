@@ -23,7 +23,7 @@ import { SQIStorage, CREATE_SQI_TABLES } from '../sqi/storage.js';
  * Schema version for migrations
  * Increment this when adding new tables/columns
  */
-const SCHEMA_VERSION = 4;;;
+const SCHEMA_VERSION = 5;
 
 /**
  * SQL statements for schema creation
@@ -201,6 +201,59 @@ export class MetadataStorage {
 
         CREATE INDEX IF NOT EXISTS idx_file_blobs_sha ON file_blobs(blob_sha);
         CREATE INDEX IF NOT EXISTS idx_file_blobs_commit ON file_blobs(commit_id);
+      `);
+    }
+
+    // Migration from v4 to v5: Add API endpoint tables
+    if (fromVersion < 5 && toVersion >= 5) {
+      db.exec(`
+        -- API endpoints
+        CREATE TABLE IF NOT EXISTS api_endpoints (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          commit_id INTEGER NOT NULL,
+          http_method TEXT NOT NULL,
+          path TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          start_line INTEGER NOT NULL,
+          end_line INTEGER NOT NULL,
+          framework TEXT NOT NULL,
+          handler_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+          handler_type TEXT NOT NULL,
+          summary TEXT,
+          description TEXT,
+          tags TEXT,
+          middleware TEXT,
+          dependencies TEXT,
+          response_model TEXT,
+          response_status INTEGER,
+          response_content_type TEXT,
+          body_schema TEXT,
+          body_content_type TEXT,
+          mcp_tool_name TEXT,
+          mcp_input_schema TEXT,
+          FOREIGN KEY (commit_id) REFERENCES indexed_commits(id) ON DELETE CASCADE
+        );
+
+        -- Endpoint parameters
+        CREATE TABLE IF NOT EXISTS endpoint_params (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          endpoint_id INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          location TEXT NOT NULL,
+          param_type TEXT,
+          required INTEGER NOT NULL,
+          default_value TEXT,
+          description TEXT,
+          FOREIGN KEY (endpoint_id) REFERENCES api_endpoints(id) ON DELETE CASCADE
+        );
+
+        -- Indexes
+        CREATE INDEX IF NOT EXISTS idx_endpoints_method ON api_endpoints(http_method);
+        CREATE INDEX IF NOT EXISTS idx_endpoints_path ON api_endpoints(path);
+        CREATE INDEX IF NOT EXISTS idx_endpoints_framework ON api_endpoints(framework);
+        CREATE INDEX IF NOT EXISTS idx_endpoints_commit ON api_endpoints(commit_id);
+        CREATE INDEX IF NOT EXISTS idx_endpoints_file ON api_endpoints(commit_id, file_path);
+        CREATE INDEX IF NOT EXISTS idx_params_endpoint ON endpoint_params(endpoint_id);
       `);
     }
 

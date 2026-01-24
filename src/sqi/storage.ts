@@ -20,6 +20,13 @@ import {
   ExtractedUsage,
   ExtractedImport,
 } from './types.js';
+import {
+  ExtractedEndpoint,
+  EndpointRecord,
+  EndpointParamRecord,
+  HttpMethod,
+  Framework,
+} from './extractors/api/types.js';
 
 /**
  * SQI schema version for migrations
@@ -149,6 +156,74 @@ CREATE TABLE IF NOT EXISTS symbol_trigrams (
 );
 
 CREATE INDEX IF NOT EXISTS idx_trigrams_trigram ON symbol_trigrams(trigram);
+
+-- API Endpoints for framework-agnostic route discovery
+CREATE TABLE IF NOT EXISTS api_endpoints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  commit_id INTEGER NOT NULL,
+
+  -- HTTP routing
+  http_method TEXT NOT NULL,
+  path TEXT NOT NULL,
+
+  -- Location
+  file_path TEXT NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+
+  -- Framework
+  framework TEXT NOT NULL,
+
+  -- Handler (link to symbols)
+  handler_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+  handler_type TEXT NOT NULL,
+
+  -- Documentation
+  summary TEXT,
+  description TEXT,
+  tags TEXT,                     -- JSON array
+
+  -- Middleware/Dependencies
+  middleware TEXT,               -- JSON array
+  dependencies TEXT,             -- JSON array (FastAPI Depends)
+
+  -- Response
+  response_model TEXT,           -- Model/DTO Name
+  response_status INTEGER,
+  response_content_type TEXT,
+
+  -- Request Body
+  body_schema TEXT,              -- Model Name or JSON Schema
+  body_content_type TEXT,
+
+  -- MCP specific
+  mcp_tool_name TEXT,
+  mcp_input_schema TEXT,
+
+  FOREIGN KEY (commit_id) REFERENCES indexed_commits(id) ON DELETE CASCADE
+);
+
+-- Endpoint parameters (path, query, header params)
+CREATE TABLE IF NOT EXISTS endpoint_params (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint_id INTEGER NOT NULL,
+
+  name TEXT NOT NULL,
+  location TEXT NOT NULL,        -- 'path', 'query', 'header', 'cookie', 'body'
+  param_type TEXT,               -- 'int', 'str', 'UUID', etc.
+  required INTEGER NOT NULL,     -- 0 or 1
+  default_value TEXT,
+  description TEXT,
+
+  FOREIGN KEY (endpoint_id) REFERENCES api_endpoints(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_endpoints_method ON api_endpoints(http_method);
+CREATE INDEX IF NOT EXISTS idx_endpoints_path ON api_endpoints(path);
+CREATE INDEX IF NOT EXISTS idx_endpoints_framework ON api_endpoints(framework);
+CREATE INDEX IF NOT EXISTS idx_endpoints_commit ON api_endpoints(commit_id);
+CREATE INDEX IF NOT EXISTS idx_endpoints_file ON api_endpoints(commit_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_params_endpoint ON endpoint_params(endpoint_id);
 `;
 
 /**
@@ -1437,6 +1512,310 @@ export class SQIStorage {
     return { exact, fuzzy };
   }
 
+  // ==================== API Endpoint Operations ====================
+
+  /**
+   * Insert an API endpoint
+   */
+  insertEndpoint(commitId: number, endpoint: ExtractedEndpoint): number {
+    const stmt = this.db.prepare(`
+      INSERT INTO api_endpoints (
+        commit_id, http_method, path, file_path, start_line, end_line,
+        framework, handler_symbol_id, handler_type,
+        summary, description, tags, middleware, dependencies,
+        response_model, response_status, response_content_type,
+        body_schema, body_content_type,
+        mcp_tool_name, mcp_input_schema
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      commitId,
+      endpoint.http_method,
+      endpoint.path,
+      endpoint.file_path,
+      endpoint.start_line,
+      endpoint.end_line,
+      endpoint.framework,
+      null, // handler_symbol_id linked later
+      endpoint.handler_type,
+      endpoint.summary ?? null,
+      endpoint.description ?? null,
+      endpoint.tags.length > 0 ? JSON.stringify(endpoint.tags) : null,
+      endpoint.middleware.length > 0 ? JSON.stringify(endpoint.middleware) : null,
+      endpoint.dependencies.length > 0 ? JSON.stringify(endpoint.dependencies) : null,
+      endpoint.response_model ?? null,
+      endpoint.response_status ?? null,
+      null, // response_content_type
+      endpoint.body_schema ?? null,
+      endpoint.body_content_type ?? null,
+      endpoint.mcp_tool_name ?? null,
+      endpoint.mcp_input_schema ?? null
+    );
+
+    const endpointId = result.lastInsertRowid as number;
+
+    // Insert path params
+    for (const paramName of endpoint.path_params) {
+      this.insertEndpointParam(endpointId, {
+        name: paramName,
+        location: 'path',
+        required: true,
+      });
+    }
+
+    // Insert query params
+    for (const param of endpoint.query_params) {
+      const paramData: { name: string; location: string; type?: string; required?: boolean; default_value?: string; description?: string } = {
+        name: param.name,
+        location: param.location,
+        required: param.required,
+      };
+      if (param.type) paramData.type = param.type;
+      if (param.default_value) paramData.default_value = param.default_value;
+      if (param.description) paramData.description = param.description;
+      this.insertEndpointParam(endpointId, paramData);
+    }
+
+    return endpointId;
+  }
+
+  /**
+   * Insert endpoint parameter
+   */
+  private insertEndpointParam(
+    endpointId: number,
+    param: { name: string; location: string; type?: string; required?: boolean; default_value?: string; description?: string }
+  ): void {
+    this.db.prepare(`
+      INSERT INTO endpoint_params (endpoint_id, name, location, param_type, required, default_value, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      endpointId,
+      param.name,
+      param.location,
+      param.type ?? null,
+      param.required ? 1 : 0,
+      param.default_value ?? null,
+      param.description ?? null
+    );
+  }
+
+  /**
+   * Bulk insert endpoints
+   */
+  insertEndpoints(commitId: number, endpoints: ExtractedEndpoint[]): number[] {
+    const insertAll = this.db.transaction(() => {
+      const ids: number[] = [];
+      for (const endpoint of endpoints) {
+        const id = this.insertEndpoint(commitId, endpoint);
+        ids.push(id);
+      }
+      return ids;
+    });
+
+    return insertAll();
+  }
+
+  /**
+   * Get endpoint by ID
+   */
+  getEndpointById(id: number): EndpointRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE id = ?')
+      .get(id) as RawEndpointRow | undefined;
+
+    return row ? this.mapEndpointRow(row) : null;
+  }
+
+  /**
+   * Find endpoints by HTTP method
+   */
+  findEndpointsByMethod(commitId: number, method: HttpMethod): EndpointRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE commit_id = ? AND http_method = ? ORDER BY path')
+      .all(commitId, method) as RawEndpointRow[];
+
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Find endpoints by path pattern (LIKE query)
+   */
+  findEndpointsByPathPattern(commitId: number, pattern: string): EndpointRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE commit_id = ? AND path LIKE ? ORDER BY path')
+      .all(commitId, pattern) as RawEndpointRow[];
+
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Find endpoints by framework
+   */
+  findEndpointsByFramework(commitId: number, framework: Framework): EndpointRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE commit_id = ? AND framework = ? ORDER BY path')
+      .all(commitId, framework) as RawEndpointRow[];
+
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Get all endpoints for a commit
+   */
+  getAllEndpoints(commitId: number): EndpointRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE commit_id = ? ORDER BY path, http_method')
+      .all(commitId) as RawEndpointRow[];
+
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Get endpoints in a file
+   */
+  getEndpointsInFile(commitId: number, filePath: string): EndpointRecord[] {
+    const rows = this.db
+      .prepare('SELECT * FROM api_endpoints WHERE commit_id = ? AND file_path = ? ORDER BY start_line')
+      .all(commitId, filePath) as RawEndpointRow[];
+
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Get endpoint parameters
+   */
+  getEndpointParams(endpointId: number): EndpointParamRecord[] {
+    return this.db
+      .prepare('SELECT * FROM endpoint_params WHERE endpoint_id = ? ORDER BY location, name')
+      .all(endpointId) as EndpointParamRecord[];
+  }
+
+  /**
+   * Find endpoints with flexible filtering
+   */
+  findEndpoints(
+    commitId: number,
+    options: {
+      method?: HttpMethod;
+      pathPattern?: string;
+      framework?: Framework;
+      limit?: number;
+    } = {}
+  ): EndpointRecord[] {
+    const { method, pathPattern, framework, limit = 100 } = options;
+
+    let query = 'SELECT * FROM api_endpoints WHERE commit_id = ?';
+    const params: (number | string)[] = [commitId];
+
+    if (method) {
+      query += ' AND http_method = ?';
+      params.push(method);
+    }
+
+    if (pathPattern) {
+      query += ' AND path LIKE ?';
+      params.push(pathPattern);
+    }
+
+    if (framework) {
+      query += ' AND framework = ?';
+      params.push(framework);
+    }
+
+    query += ' ORDER BY path, http_method LIMIT ?';
+    params.push(limit);
+
+    const rows = this.db.prepare(query).all(...params) as RawEndpointRow[];
+    return rows.map((row) => this.mapEndpointRow(row));
+  }
+
+  /**
+   * Get endpoint statistics for a commit
+   */
+  getEndpointStats(commitId: number): {
+    total: number;
+    by_method: { method: string; count: number }[];
+    by_framework: { framework: string; count: number }[];
+  } {
+    const total = this.db
+      .prepare('SELECT COUNT(*) as count FROM api_endpoints WHERE commit_id = ?')
+      .get(commitId) as { count: number };
+
+    const byMethod = this.db
+      .prepare('SELECT http_method as method, COUNT(*) as count FROM api_endpoints WHERE commit_id = ? GROUP BY http_method ORDER BY count DESC')
+      .all(commitId) as { method: string; count: number }[];
+
+    const byFramework = this.db
+      .prepare('SELECT framework, COUNT(*) as count FROM api_endpoints WHERE commit_id = ? GROUP BY framework ORDER BY count DESC')
+      .all(commitId) as { framework: string; count: number }[];
+
+    return {
+      total: total.count,
+      by_method: byMethod,
+      by_framework: byFramework,
+    };
+  }
+
+  /**
+   * Link endpoint to its handler symbol
+   */
+  linkEndpointToHandler(endpointId: number, handlerSymbolId: number): void {
+    this.db
+      .prepare('UPDATE api_endpoints SET handler_symbol_id = ? WHERE id = ?')
+      .run(handlerSymbolId, endpointId);
+  }
+
+  /**
+   * Delete endpoints for a file
+   */
+  deleteEndpointsInFile(commitId: number, filePath: string): void {
+    // First get endpoint IDs to delete their params
+    const endpoints = this.db
+      .prepare('SELECT id FROM api_endpoints WHERE commit_id = ? AND file_path = ?')
+      .all(commitId, filePath) as { id: number }[];
+
+    const deleteAll = this.db.transaction(() => {
+      for (const { id } of endpoints) {
+        this.db.prepare('DELETE FROM endpoint_params WHERE endpoint_id = ?').run(id);
+      }
+      this.db.prepare('DELETE FROM api_endpoints WHERE commit_id = ? AND file_path = ?').run(commitId, filePath);
+    });
+
+    deleteAll();
+  }
+
+  /**
+   * Map raw endpoint row to EndpointRecord
+   */
+  private mapEndpointRow(row: RawEndpointRow): EndpointRecord {
+    return {
+      id: row.id,
+      commit_id: row.commit_id,
+      http_method: row.http_method as HttpMethod,
+      path: row.path,
+      file_path: row.file_path,
+      start_line: row.start_line,
+      end_line: row.end_line,
+      framework: row.framework as Framework,
+      handler_symbol_id: row.handler_symbol_id,
+      handler_type: row.handler_type as EndpointRecord['handler_type'],
+      summary: row.summary,
+      description: row.description,
+      tags: row.tags,
+      middleware: row.middleware,
+      dependencies: row.dependencies,
+      response_model: row.response_model,
+      response_status: row.response_status,
+      response_content_type: row.response_content_type,
+      body_schema: row.body_schema,
+      body_content_type: row.body_content_type,
+      mcp_tool_name: row.mcp_tool_name,
+      mcp_input_schema: row.mcp_input_schema,
+    };
+  }
+
   // ==================== Private Helpers ====================
 
   /**
@@ -1516,4 +1895,32 @@ interface RawUsageRow {
   usage_type: string;
   enclosing_symbol_id: number | null;
   definition_symbol_id: number | null;
+}
+
+/**
+ * Raw endpoint row from database
+ */
+interface RawEndpointRow {
+  id: number;
+  commit_id: number;
+  http_method: string;
+  path: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  framework: string;
+  handler_symbol_id: number | null;
+  handler_type: string;
+  summary: string | null;
+  description: string | null;
+  tags: string | null;
+  middleware: string | null;
+  dependencies: string | null;
+  response_model: string | null;
+  response_status: number | null;
+  response_content_type: string | null;
+  body_schema: string | null;
+  body_content_type: string | null;
+  mcp_tool_name: string | null;
+  mcp_input_schema: string | null;
 }
