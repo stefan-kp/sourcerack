@@ -23,6 +23,7 @@ SourceRack combines AST-based symbol extraction with semantic embeddings to give
 - **Semantic Search** - Natural language queries ("find authentication middleware")
 - **Multi-Language** - TypeScript, JavaScript, Python, Ruby (full support), 20+ languages for embeddings
 - **Git-Aware** - Index specific commits, automatic deduplication across branches
+- **Live Updates** - Uncommitted changes are included in queries automatically
 - **Incremental** - Only re-process changed files
 - **Local-First** - Your code stays on your machine
 - **AI-Ready** - MCP server + Claude Code skill included
@@ -296,6 +297,49 @@ Want to add a language? See [CONTRIBUTING.md](./CONTRIBUTING.md) - it's ~200-400
 ```
 
 **Storage**: Everything runs locally in SQLite by default. No external services needed.
+
+## Live Code Updates (Dirty Tracking)
+
+SourceRack automatically includes your uncommitted changes in every query - no re-indexing needed.
+
+**How it works:**
+1. You index a commit (e.g., `HEAD`)
+2. You modify files in your working tree
+3. Every query automatically:
+   - Checks `git status` for modified/staged/untracked files
+   - Parses those files on-the-fly
+   - Merges results with the indexed data
+
+**What's included:**
+- Modified files (unstaged changes)
+- Staged files (`git add`)
+- New untracked files in source directories
+
+**Example workflow:**
+```bash
+# Index your repo
+sourcerack index .
+
+# Make changes to your code
+echo "export function newHelper() {}" >> src/utils.ts
+
+# Query immediately finds the new function - no re-index!
+sourcerack find-def newHelper
+# → src/utils.ts:42  [function] exported newHelper
+
+# Works with usages too
+sourcerack find-usages newHelper
+```
+
+**Why not a file watcher?**
+
+We considered adding a background file watcher for real-time indexing, but dirty tracking is simpler and sufficient:
+- No background process needed
+- No state management complexity
+- Works across git worktrees automatically
+- Parsing a few changed files is fast (~ms)
+
+The indexed commit stays immutable - your working tree changes are overlaid at query time.
 
 ## Requirements
 
