@@ -49,6 +49,9 @@ import {
   ChangeImpactInput,
   ChangeImpactOutput,
   ImpactInfo,
+  CallGraphInput,
+  CallGraphOutput,
+  CallGraphSymbolInfo,
 } from './types.js';
 import {
   FindEndpointsInput,
@@ -1275,6 +1278,176 @@ export class StructuredQueryEngine {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  // ==================== Call Graph ====================
+
+  /**
+   * Get call graph for a symbol.
+   * Shows who calls this symbol (callers) and what this symbol calls (callees).
+   */
+  async getCallGraph(input: CallGraphInput): Promise<CallGraphOutput> {
+    try {
+      // Handle cross-repo search
+      if (input.all_repos || (input.repo_ids && input.repo_ids.length > 0)) {
+        return this.getCallGraphAllRepos(input);
+      }
+
+      // Single repo search requires repo_path
+      if (!input.repo_path) {
+        return {
+          success: false,
+          error: 'repo_path is required (or use all_repos/repo_ids)',
+        };
+      }
+
+      const { commitId, error: resolveError } = await this.resolveCommit(
+        input.repo_path,
+        input.commit ?? 'HEAD'
+      );
+      if (resolveError || !commitId) {
+        const result: CallGraphOutput = { success: false };
+        if (resolveError) result.error = resolveError;
+        return result;
+      }
+
+      // Find the symbol
+      const symbols = this.sqi.findSymbolsByName(commitId, input.symbol_name);
+      if (symbols.length === 0) {
+        return {
+          success: false,
+          error: `Symbol not found: ${input.symbol_name}`,
+        };
+      }
+
+      const symbol = symbols[0]!;
+      const symbolInfo = this.symbolRecordToInfo(symbol);
+
+      const result: CallGraphOutput = {
+        success: true,
+        symbol: symbolInfo,
+      };
+
+      // Get callers (who calls this symbol?)
+      if (input.direction === 'callers' || input.direction === 'both') {
+        const callerRows = this.sqi.getCallersWithDetails(symbol.id, commitId);
+        result.callers = callerRows.map((row) => ({
+          name: row.name,
+          qualified_name: row.qualified_name,
+          kind: row.symbol_kind as SymbolKind,
+          file_path: row.file_path,
+          start_line: row.start_line,
+        }));
+      }
+
+      // Get callees (what does this symbol call?)
+      if (input.direction === 'callees' || input.direction === 'both') {
+        const calleeRows = this.sqi.getCalleesWithDetails(symbol.id, commitId);
+        result.callees = calleeRows.map((row) => ({
+          name: row.name,
+          qualified_name: row.qualified_name,
+          kind: row.symbol_kind as SymbolKind,
+          file_path: row.file_path,
+          start_line: row.start_line,
+        }));
+      }
+
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Get call graph across all repositories
+   */
+  private async getCallGraphAllRepos(input: CallGraphInput): Promise<CallGraphOutput> {
+    const { repos, error } = await this.resolveAllRepos(input.repo_ids);
+    if (error) {
+      return { success: false, error };
+    }
+
+    // First, find where the symbol is defined
+    let definitionSymbol: SymbolRecord | undefined;
+    let definitionRepo: typeof repos[0] | undefined;
+
+    for (const repo of repos) {
+      const symbols = this.sqi.findSymbolsByName(repo.commitId, input.symbol_name);
+      if (symbols.length > 0) {
+        definitionSymbol = symbols[0];
+        definitionRepo = repo;
+        break;
+      }
+    }
+
+    if (!definitionSymbol || !definitionRepo) {
+      return {
+        success: false,
+        error: `Symbol not found in any repository: ${input.symbol_name}`,
+      };
+    }
+
+    const symbolInfo = this.symbolRecordToInfo(definitionSymbol);
+    symbolInfo.repo_name = definitionRepo.repoName;
+    symbolInfo.repo_path = definitionRepo.repoPath;
+
+    const result: CallGraphOutput = {
+      success: true,
+      symbol: symbolInfo,
+    };
+
+    const allCallers: CallGraphSymbolInfo[] = [];
+    const allCallees: CallGraphSymbolInfo[] = [];
+
+    for (const repo of repos) {
+      // Get callers
+      if (input.direction === 'callers' || input.direction === 'both') {
+        // In the definition repo, use the actual symbol ID
+        if (repo.repoId === definitionRepo.repoId && definitionSymbol) {
+          const callerRows = this.sqi.getCallersWithDetails(definitionSymbol.id, repo.commitId);
+          for (const row of callerRows) {
+            allCallers.push({
+              name: row.name,
+              qualified_name: row.qualified_name,
+              kind: row.symbol_kind as SymbolKind,
+              file_path: row.file_path,
+              start_line: row.start_line,
+              repo_name: repo.repoName,
+              repo_path: repo.repoPath,
+            });
+          }
+        }
+      }
+
+      // Get callees (only makes sense in the definition repo)
+      if ((input.direction === 'callees' || input.direction === 'both') &&
+          repo.repoId === definitionRepo.repoId && definitionSymbol) {
+        const calleeRows = this.sqi.getCalleesWithDetails(definitionSymbol.id, repo.commitId);
+        for (const row of calleeRows) {
+          allCallees.push({
+            name: row.name,
+            qualified_name: row.qualified_name,
+            kind: row.symbol_kind as SymbolKind,
+            file_path: row.file_path,
+            start_line: row.start_line,
+            repo_name: repo.repoName,
+            repo_path: repo.repoPath,
+          });
+        }
+      }
+    }
+
+    if (input.direction === 'callers' || input.direction === 'both') {
+      result.callers = allCallers;
+    }
+    if (input.direction === 'callees' || input.direction === 'both') {
+      result.callees = allCallees;
+    }
+
+    return result;
   }
 
   // ==================== API Endpoints ====================

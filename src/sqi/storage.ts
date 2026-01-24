@@ -546,7 +546,7 @@ export class SQIStorage {
   }
 
   /**
-   * Find usages pointing to a definition
+   * Find usages pointing to a definition (who calls this symbol?)
    */
   findUsagesByDefinition(definitionSymbolId: number): UsageRecord[] {
     const rows = this.db
@@ -554,6 +554,99 @@ export class SQIStorage {
       .all(definitionSymbolId) as RawUsageRow[];
 
     return rows.map((row) => this.mapUsageRow(row));
+  }
+
+  /**
+   * Find usages originating from a symbol (what does this symbol call?)
+   * This is the inverse of findUsagesByDefinition - it finds callees instead of callers.
+   */
+  findUsagesByEnclosing(enclosingSymbolId: number, usageType?: UsageType): UsageRecord[] {
+    let query = 'SELECT * FROM usages WHERE enclosing_symbol_id = ?';
+    const params: (number | string)[] = [enclosingSymbolId];
+
+    if (usageType) {
+      query += ' AND usage_type = ?';
+      params.push(usageType);
+    }
+
+    query += ' ORDER BY file_path, line';
+
+    const rows = this.db.prepare(query).all(...params) as RawUsageRow[];
+    return rows.map((row) => this.mapUsageRow(row));
+  }
+
+  /**
+   * Get callees with full symbol details.
+   * Returns the symbols that the given symbol calls.
+   */
+  getCalleesWithDetails(
+    enclosingSymbolId: number,
+    commitId: number
+  ): {
+    symbol_id: number;
+    name: string;
+    qualified_name: string;
+    symbol_kind: string;
+    file_path: string;
+    start_line: number;
+  }[] {
+    // Find all usages where this symbol is the caller (enclosing),
+    // and join with symbols to get the callee details
+    return this.db
+      .prepare(`
+        SELECT DISTINCT s.id as symbol_id, s.name, s.qualified_name, s.symbol_kind, s.file_path, s.start_line
+        FROM usages u
+        JOIN symbols s ON u.definition_symbol_id = s.id
+        WHERE u.enclosing_symbol_id = ?
+          AND u.usage_type = 'call'
+          AND s.commit_id = ?
+        ORDER BY s.file_path, s.start_line
+      `)
+      .all(enclosingSymbolId, commitId) as {
+      symbol_id: number;
+      name: string;
+      qualified_name: string;
+      symbol_kind: string;
+      file_path: string;
+      start_line: number;
+    }[];
+  }
+
+  /**
+   * Get callers with full symbol details.
+   * Returns the symbols that call the given symbol.
+   */
+  getCallersWithDetails(
+    definitionSymbolId: number,
+    commitId: number
+  ): {
+    symbol_id: number;
+    name: string;
+    qualified_name: string;
+    symbol_kind: string;
+    file_path: string;
+    start_line: number;
+  }[] {
+    // Find all usages where this symbol is called (definition),
+    // and join with symbols to get the caller details
+    return this.db
+      .prepare(`
+        SELECT DISTINCT s.id as symbol_id, s.name, s.qualified_name, s.symbol_kind, s.file_path, s.start_line
+        FROM usages u
+        JOIN symbols s ON u.enclosing_symbol_id = s.id
+        WHERE u.definition_symbol_id = ?
+          AND u.usage_type = 'call'
+          AND s.commit_id = ?
+        ORDER BY s.file_path, s.start_line
+      `)
+      .all(definitionSymbolId, commitId) as {
+      symbol_id: number;
+      name: string;
+      qualified_name: string;
+      symbol_kind: string;
+      file_path: string;
+      start_line: number;
+    }[];
   }
 
   /**

@@ -760,3 +760,56 @@ export interface ChangeImpactOutput {
   total_affected: number;
   error?: string;
 }
+
+// ============================================================================
+// Call Graph Types
+// ============================================================================
+
+/**
+ * Information about a symbol in the call graph (caller or callee)
+ */
+export interface CallGraphSymbolInfo {
+  name: string;
+  qualified_name: string;
+  kind: SymbolKind;
+  file_path: string;
+  start_line: number;
+  /** Repository name (populated in cross-repo queries) */
+  repo_name?: string | undefined;
+  /** Repository path (populated in cross-repo queries) */
+  repo_path?: string | undefined;
+}
+
+/**
+ * Input for call graph query
+ */
+export interface CallGraphInput {
+  /** Repository path (required unless all_repos or repo_ids is set) */
+  repo_path?: string;
+  /** Commit to search (default: HEAD) */
+  commit?: string;
+  /** Symbol name to get call graph for */
+  symbol_name: string;
+  /** Direction of the graph */
+  direction: 'callers' | 'callees' | 'both';
+  /** Maximum depth for traversal (default: 2) */
+  max_depth?: number;
+  /** Search across all indexed repositories */
+  all_repos?: boolean;
+  /** Search only in specific repositories (by ID) */
+  repo_ids?: string[];
+}
+
+/**
+ * Output from call graph query
+ */
+export interface CallGraphOutput {
+  success: boolean;
+  /** The symbol we're analyzing */
+  symbol?: SymbolInfo;
+  /** Symbols that call this symbol (who calls me?) */
+  callers?: CallGraphSymbolInfo[];
+  /** Symbols that this symbol calls (who do I call?) */
+  callees?: CallGraphSymbolInfo[];
+  error?: string;
+}
