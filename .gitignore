@@ -69,3 +69,12 @@ specs/
 
 # Local test repositories (not committed)
 test_repos/
+
+# Internal analysis (not committed)
+local/
+
+# Spurious SQLite files
+:memory:
+
+# Local scripts (not committed)
+scripts/
