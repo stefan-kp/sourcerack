@@ -10,7 +10,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -117,7 +117,7 @@ export class FlaskExtractor extends EndpointExtractor {
     const httpMethod: HttpMethod = httpMethods.length === 1 ? httpMethods[0]! : 'ALL';
 
     // Build the endpoint options
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path,
       path_params: this.parsePathParams(path),

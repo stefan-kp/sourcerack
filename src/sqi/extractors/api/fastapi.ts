@@ -14,7 +14,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions, CreateParamOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -132,7 +132,7 @@ export class FastAPIExtractor extends EndpointExtractor {
     const returnType = this.extractReturnType(funcDef);
 
     // Build the endpoint options, only including non-undefined values
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path,
       path_params: pathParams,
@@ -379,7 +379,7 @@ export class FastAPIExtractor extends EndpointExtractor {
     }
 
     // Build param object with only non-undefined values
-    const paramOptions: Parameters<typeof this.createParam>[0] = {
+    const paramOptions: CreateParamOptions = {
       name: paramName,
       location,
       required,

@@ -16,6 +16,46 @@ import {
 } from './types.js';
 
 /**
+ * Options for creating an endpoint
+ */
+export interface CreateEndpointOptions {
+  http_method: HttpMethod;
+  path: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  path_params?: string[];
+  framework?: Framework;
+  handler_name?: string;
+  handler_type?: ExtractedEndpoint['handler_type'];
+  middleware?: string[];
+  dependencies?: string[];
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  query_params?: EndpointParam[];
+  body_schema?: string;
+  body_content_type?: string;
+  response_model?: string;
+  response_status?: number;
+  response_description?: string;
+  mcp_tool_name?: string;
+  mcp_input_schema?: string;
+}
+
+/**
+ * Options for creating a parameter
+ */
+export interface CreateParamOptions {
+  name: string;
+  location: ParamLocation;
+  type?: string;
+  required?: boolean;
+  default_value?: string;
+  description?: string;
+}
+
+/**
  * Abstract base class for framework-specific endpoint extractors
  */
 export abstract class EndpointExtractor {
@@ -311,32 +351,7 @@ export abstract class EndpointExtractor {
   /**
    * Create a minimal endpoint with defaults
    */
-  protected createEndpoint(
-    partial: {
-      http_method: HttpMethod;
-      path: string;
-      file_path: string;
-      start_line: number;
-      end_line: number;
-      path_params?: string[];
-      framework?: Framework;
-      handler_name?: string;
-      handler_type?: ExtractedEndpoint['handler_type'];
-      middleware?: string[];
-      dependencies?: string[];
-      summary?: string;
-      description?: string;
-      tags?: string[];
-      query_params?: EndpointParam[];
-      body_schema?: string;
-      body_content_type?: string;
-      response_model?: string;
-      response_status?: number;
-      response_description?: string;
-      mcp_tool_name?: string;
-      mcp_input_schema?: string;
-    }
-  ): ExtractedEndpoint {
+  protected createEndpoint(partial: CreateEndpointOptions): ExtractedEndpoint {
     const endpoint: ExtractedEndpoint = {
       http_method: partial.http_method,
       path: partial.path,
@@ -370,16 +385,7 @@ export abstract class EndpointExtractor {
   /**
    * Create an endpoint parameter
    */
-  protected createParam(
-    partial: {
-      name: string;
-      location: ParamLocation;
-      type?: string;
-      required?: boolean;
-      default_value?: string;
-      description?: string;
-    }
-  ): EndpointParam {
+  protected createParam(partial: CreateParamOptions): EndpointParam {
     const param: EndpointParam = {
       name: partial.name,
       location: partial.location,

@@ -10,7 +10,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   ExtractedEndpoint,
@@ -75,7 +75,7 @@ export class FastifyExtractor extends EndpointExtractor {
     filePath: string
   ): ExtractedEndpoint | null {
     const funcNode = this.getChildByField(callNode, 'function');
-    if (!funcNode || funcNode.type !== 'member_expression') return null;
+    if (funcNode?.type !== 'member_expression') return null;
 
     const propertyNode = this.getChildByField(funcNode, 'property');
     if (!propertyNode) return null;
@@ -107,7 +107,7 @@ export class FastifyExtractor extends EndpointExtractor {
 
     const location = this.getLocation(callNode);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: this.normalizeHttpMethod(methodName),
       path,
       path_params: this.parsePathParams(path),
@@ -135,7 +135,7 @@ export class FastifyExtractor extends EndpointExtractor {
     filePath: string
   ): ExtractedEndpoint | null {
     const funcNode = this.getChildByField(callNode, 'function');
-    if (!funcNode || funcNode.type !== 'member_expression') return null;
+    if (funcNode?.type !== 'member_expression') return null;
 
     const propertyNode = this.getChildByField(funcNode, 'property');
     if (propertyNode?.text !== 'route') return null;
@@ -182,7 +182,7 @@ export class FastifyExtractor extends EndpointExtractor {
 
     const location = this.getLocation(callNode);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: this.normalizeHttpMethod(method),
       path: url,
       path_params: this.parsePathParams(url),

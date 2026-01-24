@@ -12,7 +12,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   ExtractedEndpoint,
@@ -103,9 +103,9 @@ export class ExpressExtractor extends EndpointExtractor {
     // Get handler name if it's a reference
     let handlerName: string | undefined;
     const lastArg = args[args.length - 1];
-    if (lastArg && lastArg.type === 'identifier') {
+    if (lastArg?.type === 'identifier') {
       handlerName = lastArg.text;
-    } else if (lastArg && lastArg.type === 'member_expression') {
+    } else if (lastArg?.type === 'member_expression') {
       handlerName = lastArg.text;
     }
 
@@ -127,7 +127,7 @@ export class ExpressExtractor extends EndpointExtractor {
     const location = this.getLocation(callNode);
     const httpMethod = this.normalizeHttpMethod(methodName);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path,
       path_params: this.parsePathParams(path),

@@ -11,7 +11,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -111,7 +111,7 @@ export class DjangoExtractor extends EndpointExtractor {
 
     // Get the function definition
     const funcDef = this.getChildByField(node, 'definition');
-    if (!funcDef || funcDef.type !== 'function_definition') {
+    if (funcDef?.type !== 'function_definition') {
       return null;
     }
 
@@ -128,7 +128,7 @@ export class DjangoExtractor extends EndpointExtractor {
     // Create endpoint for each HTTP method
     const endpoints: ExtractedEndpoint[] = [];
     for (const method of httpMethods) {
-      const options: Parameters<typeof this.createEndpoint>[0] = {
+      const options: CreateEndpointOptions = {
         http_method: method,
         path: `/${handlerName}`,  // Path is defined in urls.py, use function name as hint
         path_params: [],
@@ -161,7 +161,7 @@ export class DjangoExtractor extends EndpointExtractor {
     if (!call) return null;
 
     const funcNode = this.getChildByField(call, 'function');
-    if (!funcNode || funcNode.text !== 'api_view') {
+    if (funcNode?.text !== 'api_view') {
       return null;
     }
 
@@ -278,7 +278,7 @@ export class DjangoExtractor extends EndpointExtractor {
       if (!call) continue;
 
       const funcNode = this.getChildByField(call, 'function');
-      if (!funcNode || funcNode.text !== 'action') continue;
+      if (funcNode?.text !== 'action') continue;
 
       // Parse action decorator arguments
       const args = this.getChildByField(call, 'arguments');
@@ -325,7 +325,7 @@ export class DjangoExtractor extends EndpointExtractor {
 
       // Get the method definition
       const funcDef = this.getChildByField(decoratedDef, 'definition');
-      if (!funcDef || funcDef.type !== 'function_definition') continue;
+      if (funcDef?.type !== 'function_definition') continue;
 
       const methodNameNode = this.getChildByField(funcDef, 'name');
       const methodName = methodNameNode?.text ?? 'custom_action';
@@ -344,7 +344,7 @@ export class DjangoExtractor extends EndpointExtractor {
       // Create endpoint for first method (most common case)
       const method = methods[0] ?? 'GET';
 
-      const options: Parameters<typeof this.createEndpoint>[0] = {
+      const options: CreateEndpointOptions = {
         http_method: method,
         path,
         path_params: detail ? ['id'] : [],
@@ -387,7 +387,7 @@ export class DjangoExtractor extends EndpointExtractor {
     const basePath = `/${className.toLowerCase()}`;
     const path = needsId ? `${basePath}/{id}` : basePath;
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path,
       path_params: needsId ? ['id'] : [],
@@ -424,7 +424,7 @@ export class DjangoExtractor extends EndpointExtractor {
     const httpMethod = this.normalizeHttpMethod(methodName);
     const path = `/${className.toLowerCase()}`;
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path,
       path_params: [],

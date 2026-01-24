@@ -11,7 +11,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions, CreateParamOptions } from './base.js';
 import {
   Framework,
   ExtractedEndpoint,
@@ -167,7 +167,7 @@ export class MCPExtractor extends EndpointExtractor {
 
     const location = this.getLocation(objectNode);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: 'ALL', // MCP tools don't have HTTP methods
       path: `mcp://${toolName}`,
       path_params: [],
@@ -252,7 +252,7 @@ export class MCPExtractor extends EndpointExtractor {
         }
       }
 
-      const paramOptions: Parameters<typeof this.createParam>[0] = {
+      const paramOptions: CreateParamOptions = {
         name: paramName,
         location: 'body', // MCP params are in the request body
         required: requiredArray.includes(paramName),
@@ -353,7 +353,7 @@ export class MCPExtractor extends EndpointExtractor {
 
       const location = this.getLocation(callNode);
 
-      const options: Parameters<typeof this.createEndpoint>[0] = {
+      const options: CreateEndpointOptions = {
         http_method: 'ALL',
         path: `mcp://${toolName}`,
         path_params: [],

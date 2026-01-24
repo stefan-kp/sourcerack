@@ -16,7 +16,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions, CreateParamOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -159,7 +159,7 @@ export class RailsControllerExtractor extends EndpointExtractor {
         pathParams = needsId ? ['id'] : [];
       }
 
-      const options: Record<string, unknown> = {
+      const options: CreateEndpointOptions = {
         http_method: httpMethod,
         path,
         path_params: pathParams,
@@ -191,7 +191,7 @@ export class RailsControllerExtractor extends EndpointExtractor {
         if (yardDoc.returns) options.response_model = yardDoc.returns;
       }
 
-      endpoints.push(this.createEndpoint(options as Parameters<EndpointExtractor['createEndpoint']>[0]));
+      endpoints.push(this.createEndpoint(options));
     }
 
     return endpoints;
@@ -296,8 +296,8 @@ export class RailsControllerExtractor extends EndpointExtractor {
       if (!text.includes('permit')) continue;
 
       // Find permit arguments
-      const permitMatch = text.match(/\.permit\(([^)]+)\)/);
-      if (permitMatch && permitMatch[1]) {
+      const permitMatch = /\.permit\(([^)]+)\)/.exec(text);
+      if (permitMatch?.[1]) {
         const permitArgs = permitMatch[1];
         // Extract symbols like :name, :email
         const symbolMatches = permitArgs.matchAll(/:(\w+)/g);
@@ -354,7 +354,7 @@ export class RailsControllerExtractor extends EndpointExtractor {
     const beforeMethod = sourceCode.substring(Math.max(0, methodStart - 5000), methodStart);
 
     // Extract api declaration: api :POST, '/v1/conversation_threads', 'Description'
-    const apiMatch = beforeMethod.match(/api\s+:(\w+),\s*['"]([^'"]+)['"](?:,\s*['"]([^'"]+)['"])?/);
+    const apiMatch = /api\s+:(\w+),\s*['"]([^'"]+)['"](?:,\s*['"]([^'"]+)['"])?/.exec(beforeMethod);
     if (apiMatch) {
       result.httpMethod = apiMatch[1] ?? null;
       result.path = apiMatch[2] ?? null;
@@ -365,8 +365,8 @@ export class RailsControllerExtractor extends EndpointExtractor {
 
     // Extract desc with heredoc support: desc <<-EOF ... EOF or desc "text"
     // Match heredoc pattern
-    const heredocMatch = beforeMethod.match(/desc\s+<<-?(\w+)\s*\n([\s\S]*?)\n\s*\1/);
-    if (heredocMatch && heredocMatch[2]) {
+    const heredocMatch = /desc\s+<<-?(\w+)\s*\n([\s\S]*?)\n\s*\1/.exec(beforeMethod);
+    if (heredocMatch?.[2]) {
       result.description = heredocMatch[2].trim();
       // First line as summary if not already set
       if (!result.summary) {
@@ -378,8 +378,8 @@ export class RailsControllerExtractor extends EndpointExtractor {
       }
     } else {
       // Match simple string desc: desc "text" or desc 'text'
-      const simpleDescMatch = beforeMethod.match(/desc\s+(['"])([\s\S]*?)\1/);
-      if (simpleDescMatch && simpleDescMatch[2]) {
+      const simpleDescMatch = /desc\s+(['"])([\s\S]*?)\1/.exec(beforeMethod);
+      if (simpleDescMatch?.[2]) {
         result.description = simpleDescMatch[2].trim();
         if (!result.summary) {
           result.summary = result.description.split('\n')[0]?.trim() ?? null;
@@ -392,7 +392,7 @@ export class RailsControllerExtractor extends EndpointExtractor {
     this.extractApipieParams(beforeMethod, result.params, '');
 
     // Extract returns
-    const returnsMatch = beforeMethod.match(/returns\s+(?::code\s*=>\s*(\d+)|:(\w+))/);
+    const returnsMatch = /returns\s+(?::code\s*=>\s*(\d+)|:(\w+))/.exec(beforeMethod);
     if (returnsMatch) {
       result.returns = returnsMatch[1] ?? returnsMatch[2] ?? null;
     }
@@ -431,21 +431,21 @@ export class RailsControllerExtractor extends EndpointExtractor {
 
         // Extract description from desc: "..." or desc: '...'
         let description: string | null = null;
-        const descMatch = options.match(/desc:\s*['"]([^'"]+)['"]/);
-        if (descMatch && descMatch[1]) {
+        const descMatch = /desc:\s*['"]([^'"]+)['"]/.exec(options);
+        if (descMatch?.[1]) {
           description = descMatch[1];
         }
 
         // Extract default value
         let defaultValue: string | null = null;
-        const defaultMatch = options.match(/default:\s*(['"]?)([^'",\s]+)\1/);
+        const defaultMatch = /default:\s*(['"]?)([^'",\s]+)\1/.exec(options);
         if (defaultMatch) {
           defaultValue = defaultMatch[2] ?? null;
         }
 
         const fullName = prefix ? `${prefix}.${paramName}` : paramName;
 
-        const paramOptions: Parameters<typeof this.createParam>[0] = {
+        const paramOptions: CreateParamOptions = {
           name: fullName,
           location: 'body',
           type: this.cleanApipieType(paramType),
@@ -531,9 +531,9 @@ export class RailsControllerExtractor extends EndpointExtractor {
     for (const line of commentLines) {
       if (line.startsWith('@param')) {
         // @param name [Type] description
-        const match = line.match(/@param\s+(\w+)\s+\[([^\]]+)\]\s*(.*)/);
-        if (match && match[1] && match[2]) {
-          const paramOptions: Parameters<typeof this.createParam>[0] = {
+        const match = /@param\s+(\w+)\s+\[([^\]]+)\]\s*(.*)/.exec(line);
+        if (match?.[1] && match[2]) {
+          const paramOptions: CreateParamOptions = {
             name: match[1],
             location: 'query',
             type: match[2],
@@ -546,8 +546,8 @@ export class RailsControllerExtractor extends EndpointExtractor {
         }
       } else if (line.startsWith('@return')) {
         // @return [Type] description
-        const match = line.match(/@return\s+\[([^\]]+)\]/);
-        if (match && match[1]) {
+        const match = /@return\s+\[([^\]]+)\]/.exec(line);
+        if (match?.[1]) {
           result.returns = match[1];
         }
       } else if (!line.startsWith('@')) {

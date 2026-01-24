@@ -13,7 +13,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -193,7 +193,7 @@ export class RailsExtractor extends EndpointExtractor {
     const fullPath = pathPrefix + (path.startsWith('/') ? path : '/' + path);
     const location = this.getLocation(callNode);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: this.normalizeHttpMethod(methodName),
       path: fullPath,
       path_params: this.parsePathParams(fullPath),
@@ -262,10 +262,10 @@ export class RailsExtractor extends EndpointExtractor {
     // Determine which actions to generate
     let actions = Object.keys(RESTFUL_ACTIONS);
     if (onlyActions) {
-      actions = actions.filter(a => onlyActions!.includes(a));
+      actions = actions.filter(a => onlyActions.includes(a));
     }
     if (exceptActions) {
-      actions = actions.filter(a => !exceptActions!.includes(a));
+      actions = actions.filter(a => !exceptActions.includes(a));
     }
 
     // For singular resources, don't include index and use different paths

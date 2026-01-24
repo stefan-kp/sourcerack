@@ -13,7 +13,7 @@
  */
 
 import Parser from 'tree-sitter';
-import { EndpointExtractor } from './base.js';
+import { EndpointExtractor, CreateEndpointOptions } from './base.js';
 import {
   Framework,
   HttpMethod,
@@ -218,7 +218,7 @@ export class NestJSExtractor extends EndpointExtractor {
 
     const location = this.getLocation(methodNode);
 
-    const options: Parameters<typeof this.createEndpoint>[0] = {
+    const options: CreateEndpointOptions = {
       http_method: httpMethod,
       path: '/' + fullPath,
       path_params: this.parsePathParams(fullPath),
