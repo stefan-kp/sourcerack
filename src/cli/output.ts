@@ -92,13 +92,28 @@ export function formatIndexResult(result: IndexingResult, options: OutputOptions
   }
 
   if (result.success) {
-    console.log(`\nIndexing complete:`);
-    console.log(`  Repository: ${result.repoId}`);
-    console.log(`  Commit: ${result.commitSha.substring(0, 8)}`);
-    console.log(`  Files processed: ${String(result.filesProcessed)}`);
-    console.log(`  Chunks created: ${String(result.chunksCreated)}`);
-    console.log(`  Chunks reused: ${String(result.chunksReused)}`);
-    console.log(`  Duration: ${(result.durationMs / 1000).toFixed(2)}s`);
+    // Check if incremental indexing was used
+    const isIncremental = result.baseCommitSha !== undefined;
+
+    if (isIncremental) {
+      console.log(`\n✨ Incremental indexing complete:`);
+      console.log(`  Base commit: ${result.baseCommitSha?.substring(0, 8)}`);
+      console.log(`  New commit: ${result.commitSha.substring(0, 8)}`);
+      console.log(`  Changed files: ${String(result.changedFiles ?? 0)}`);
+      console.log(`  Unchanged files: ${String(result.unchangedFiles ?? 0)} (reused)`);
+      console.log(`  Files processed: ${String(result.filesProcessed)}`);
+      console.log(`  Chunks created: ${String(result.chunksCreated)}`);
+      console.log(`  Chunks reused: ${String(result.chunksReused)}`);
+      console.log(`  Duration: ${(result.durationMs / 1000).toFixed(2)}s`);
+    } else {
+      console.log(`\nIndexing complete:`);
+      console.log(`  Repository: ${result.repoId}`);
+      console.log(`  Commit: ${result.commitSha.substring(0, 8)}`);
+      console.log(`  Files processed: ${String(result.filesProcessed)}`);
+      console.log(`  Chunks created: ${String(result.chunksCreated)}`);
+      console.log(`  Chunks reused: ${String(result.chunksReused)}`);
+      console.log(`  Duration: ${(result.durationMs / 1000).toFixed(2)}s`);
+    }
 
     // Show file coverage summary
     if (result.fileCoverage) {

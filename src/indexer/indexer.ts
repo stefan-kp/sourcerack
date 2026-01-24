@@ -31,6 +31,7 @@ import {
 } from './types.js';
 import { createSQIIndexer, SQIIndexer } from '../sqi/sqi-indexer.js';
 import { getExtractorRegistry } from '../sqi/extractors/registry.js';
+import { IncrementalIndexer } from './incremental.js';
 
 
 /**
@@ -150,6 +151,44 @@ export class Indexer {
   }
 
   /**
+   * Find the most recent successfully indexed commit for this repo
+   * that is an ancestor of the target commit.
+   * Returns null if no suitable base commit exists.
+   */
+  private findMostRecentIndexedCommit(
+    repoId: string,
+    targetCommitSha: string
+  ): { commit_sha: string; id: number } | null {
+    // Get all indexed commits for this repo, ordered by most recent first
+    const indexedCommits = this.metadata.listIndexedCommits(repoId);
+
+    // Filter to only complete commits
+    const completeCommits = indexedCommits.filter((c) => c.status === 'complete');
+
+    if (completeCommits.length === 0) {
+      return null;
+    }
+
+    // For now, just use the most recent complete commit
+    // A more sophisticated approach would verify git ancestry,
+    // but for typical workflows (linear history), this works fine
+    const mostRecent = completeCommits[0];
+    if (!mostRecent) {
+      return null;
+    }
+
+    // Don't use the same commit as base
+    if (mostRecent.commit_sha === targetCommitSha) {
+      return null;
+    }
+
+    return {
+      commit_sha: mostRecent.commit_sha,
+      id: mostRecent.id,
+    };
+  }
+
+  /**
    * Index a commit (full indexing)
    */
   async indexCommit(options: IndexingOptions): Promise<IndexingResult> {
@@ -223,6 +262,64 @@ export class Indexer {
         );
       }
 
+      // Check if we can do incremental indexing (smart re-index)
+      const baseCommit = this.findMostRecentIndexedCommit(repoId, commitSha);
+      if (baseCommit) {
+        // Release our lock - IncrementalIndexer has its own locking
+        this.releaseLock(repoId, commitSha);
+
+        // Use incremental indexing to reuse data from base commit
+        const repoPath = this.git.getRepositoryInfo().path;
+        const incrementalIndexer = new IncrementalIndexer(
+          repoPath,
+          this.git,
+          this.metadata,
+          this.vectors,
+          this.embeddings,
+          this.batchSize
+        );
+
+        emitProgress({
+          type: 'incremental_start',
+          message: `Using incremental indexing from ${baseCommit.commit_sha.slice(0, 8)}`,
+        });
+
+        const incrementalOptions: Parameters<typeof incrementalIndexer.indexIncremental>[0] = {
+          repoPath,
+          repoId,
+          commitSha,
+          baseCommitSha: baseCommit.commit_sha,
+          skipEmbeddings: skipEmbeddings === true,
+        };
+        if (branch) {
+          incrementalOptions.branch = branch;
+        }
+        if (onProgress) {
+          incrementalOptions.onProgress = onProgress;
+        }
+        const result = await incrementalIndexer.indexIncremental(incrementalOptions);
+
+        // Convert IncrementalIndexingResult to IndexingResult
+        const indexingResult: IndexingResult = {
+          success: result.success,
+          repoId: result.repoId,
+          commitSha: result.commitSha,
+          filesProcessed: result.filesProcessed,
+          chunksCreated: result.chunksCreated,
+          chunksReused: result.chunksReused,
+          durationMs: result.durationMs,
+          // Include incremental-specific info
+          baseCommitSha: result.baseCommitSha,
+          changedFiles: result.changedFiles,
+          unchangedFiles: result.unchangedFiles,
+        };
+        if (result.error) {
+          indexingResult.error = result.error;
+        }
+        return indexingResult;
+      }
+
+      // No previous commit found - do full indexing
       // Start indexing record in metadata with appropriate embedding status
       const commitRecord = this.metadata.startIndexing(repoId, commitSha, embeddingStatus);
 

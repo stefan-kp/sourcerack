@@ -9,6 +9,7 @@ import type { CodeChunk } from '../parser/types.js';
  */
 export type IndexingEventType =
   | 'started'
+  | 'incremental_start'
   | 'files_listed'
   | 'grammars_installing'
   | 'file_parsed'
@@ -42,6 +43,8 @@ export interface IndexingProgressEvent {
   error?: string;
   /** Missing grammars being installed (for grammars_installing event) */
   missingGrammars?: string[];
+  /** Message for incremental_start event */
+  message?: string;
   /** Timestamp */
   timestamp: Date;
 }
@@ -94,6 +97,12 @@ export interface IndexingResult {
   error?: string;
   /** File coverage summary */
   fileCoverage?: FileCoverage;
+  /** Base commit SHA (when incremental indexing was used) */
+  baseCommitSha?: string;
+  /** Number of changed files (when incremental indexing was used) */
+  changedFiles?: number;
+  /** Number of unchanged files (when incremental indexing was used) */
+  unchangedFiles?: number;
 }
 
 /**
