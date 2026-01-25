@@ -174,13 +174,33 @@ export class SqliteVssStorage implements VectorStorage {
       this.migrateFromOldSchema();
     }
 
-    // Create vec0 virtual table for embeddings
-    // Using rowid as the key, which we'll map to chunk_id via metadata table
-    this.db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
-        embedding float[${this.dimensions}]
+    // Check if we need to migrate from L2 to Cosine distance
+    const hasOldVecTable = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_embeddings'"
       )
-    `);
+      .get();
+
+    if (hasOldVecTable) {
+      // Check if it's the old L2 table (no distance_metric)
+      // We can detect this by checking the table schema
+      const tableInfo = this.db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_embeddings'")
+        .get() as { sql: string } | undefined;
+
+      // If it doesn't have distance_metric=cosine, migrate
+      if (tableInfo && !tableInfo.sql.includes('distance_metric=cosine')) {
+        this.migrateToCosineSimilarity();
+      }
+    } else {
+      // Create vec0 virtual table for embeddings with COSINE distance
+      // This gives us 0-1 similarity scores like other vector DBs
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+          embedding float[${this.dimensions}] distance_metric=cosine
+        )
+      `);
+    }
 
     // Create metadata table
     this.db.exec(`
@@ -210,6 +230,32 @@ export class SqliteVssStorage implements VectorStorage {
       CREATE INDEX IF NOT EXISTS idx_chunk_metadata_path ON chunk_metadata(path);
       CREATE INDEX IF NOT EXISTS idx_chunk_metadata_rowid_ref ON chunk_metadata(rowid_ref);
     `);
+  }
+
+  /**
+   * Migrate from L2 distance to Cosine similarity
+   * This requires recreating the vec0 table
+   */
+  private migrateToCosineSimilarity(): void {
+    if (!this.db) return;
+
+    console.log('Migrating vector storage from L2 to Cosine similarity...');
+    console.log('This requires re-indexing. Please run: sourcerack index --force');
+
+    // Drop the old L2-based table
+    this.db.exec('DROP TABLE IF EXISTS vec_embeddings');
+
+    // Create new table with Cosine distance
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
+        embedding float[${this.dimensions}] distance_metric=cosine
+      )
+    `);
+
+    // Clear metadata since vectors are gone
+    this.db.exec('DELETE FROM chunk_metadata');
+
+    console.log('Migration complete. Vector data cleared.');
   }
 
   /**
@@ -503,15 +549,17 @@ export class SqliteVssStorage implements VectorStorage {
       }[];
 
       // Build results with scores
-      // sqlite-vec returns L2 distance, convert to similarity score
+      // With Cosine distance: 0 = identical, 2 = opposite
+      // Convert to similarity: similarity = 1 - (distance / 2)
+      // This gives us 0-1 range like other vector DBs
       const results: SearchResult[] = [];
       for (const row of metaRows) {
         const distance = distanceMap.get(row.rowid_ref);
         if (distance === undefined) continue;
 
-        // Convert L2 distance to similarity score (0-1 range)
-        // Using: score = 1 / (1 + distance)
-        const score = 1 / (1 + distance);
+        // Convert Cosine distance to similarity score (0-1 range)
+        // Cosine distance is in [0, 2], similarity is 1 - (distance / 2)
+        const score = 1 - (distance / 2);
 
         results.push({
           id: row.id,
