@@ -430,9 +430,13 @@ export class IncrementalIndexer {
               }
             }
 
-            // Embed new chunks
+            // Embed new chunks with context prefix for better embeddings
             if (newChunks.length > 0) {
-              const textsToEmbed = newChunks.map((dc) => dc.chunk.content);
+              // Add file path context to improve embedding quality
+              // This helps the model understand the code's location and purpose
+              const textsToEmbed = newChunks.map(
+                (dc) => `File: ${dc.chunk.path}\n\n${dc.chunk.content}`
+              );
               const embeddings = await this.embeddings!.embedBatch(textsToEmbed);
 
               for (let i = 0; i < newChunks.length; i++) {

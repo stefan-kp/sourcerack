@@ -24,6 +24,8 @@ interface QueryOptions {
   allRepos?: boolean;
   repos?: string[];
   group?: string;
+  hybrid?: boolean;
+  boost?: boolean;
 }
 
 /**
@@ -53,11 +55,16 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
 
     // Run with context
     const output = await withContext(async (context) => {
+      // Get SQI storage for hybrid search
+      const sqi = options.hybrid ? context.metadata.getSQIStorage() : null;
+
       // Create query orchestrator
       const queryOrchestrator = createQueryOrchestrator(
         context.metadata,
         context.vectors,
-        context.embeddings
+        context.embeddings,
+        undefined, // Use default config
+        sqi
       );
 
       if (isMultiRepo) {
@@ -108,6 +115,12 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
           }
           if (options.pathPattern !== undefined) {
             queryOptions.pathPattern = options.pathPattern;
+          }
+          if (options.hybrid === true) {
+            queryOptions.hybrid = true;
+          }
+          if (options.boost === true) {
+            queryOptions.boost = true;
           }
 
           try {
@@ -168,6 +181,12 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
       }
       if (options.pathPattern !== undefined) {
         queryOptions.pathPattern = options.pathPattern;
+      }
+      if (options.hybrid === true) {
+        queryOptions.hybrid = true;
+      }
+      if (options.boost === true) {
+        queryOptions.boost = true;
       }
 
       // Execute query
@@ -246,6 +265,8 @@ export function registerQueryCommand(program: Command): void {
     .option('--all-repos', 'Search across all indexed repositories')
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .option('-g, --group <name>', 'Search repositories in named group')
+    .option('--hybrid', 'Enable hybrid search (vector + SQI with RRF fusion)')
+    .option('--boost', 'Enable structural boosting (penalize test files, boost source files)')
     .action(async (searchQuery: string, repoPath: string | undefined, options: QueryOptions) => {
       await executeQuery(searchQuery, repoPath, options);
     });

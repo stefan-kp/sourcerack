@@ -13,6 +13,12 @@
 import { MetadataStorage } from '../storage/metadata.js';
 import type { VectorStorage, SearchResult, SearchFilters, ContentType } from '../storage/vector-storage.js';
 import type { EmbeddingProvider, EmbeddingVector } from '../embeddings/types.js';
+import {
+  extractSearchTerms,
+  DEFAULT_BOOST_CONFIG as DEFAULT_STRUCTURAL_BOOST_CONFIG,
+  type BoostConfig as StructuralBoostConfig,
+} from '../search/hybrid.js';
+import type { SQIStorage } from '../sqi/storage.js';
 
 /**
  * Query intent detected from the query text
@@ -59,6 +65,10 @@ export interface QueryOptions {
   includeAllContentTypes?: boolean;
   /** Pagination cursor for subsequent pages */
   cursor?: PaginationCursor;
+  /** Enable hybrid search (vector + SQI with RRF fusion) */
+  hybrid?: boolean;
+  /** Enable structural boosting (penalize test files, boost source files) */
+  boost?: boolean;
 }
 
 /**
@@ -426,24 +436,30 @@ export class QueryOrchestrator {
   private vectors: VectorStorage;
   private embeddings: EmbeddingProvider;
   private config: QueryConfig;
+  private sqi: SQIStorage | null;
+  private structuralBoostConfig: StructuralBoostConfig;
 
   constructor(
     metadata: MetadataStorage,
     vectors: VectorStorage,
     embeddings: EmbeddingProvider,
-    config: QueryConfig = DEFAULT_QUERY_CONFIG
+    config: QueryConfig = DEFAULT_QUERY_CONFIG,
+    sqi: SQIStorage | null = null,
+    structuralBoostConfig: StructuralBoostConfig = DEFAULT_STRUCTURAL_BOOST_CONFIG
   ) {
     this.metadata = metadata;
     this.vectors = vectors;
     this.embeddings = embeddings;
     this.config = config;
+    this.sqi = sqi;
+    this.structuralBoostConfig = structuralBoostConfig;
   }
 
   /**
    * Execute a semantic search query
    */
   async query(options: QueryOptions): Promise<QueryResult> {
-    const { repoId, commitSha, query, language, pathPattern, cursor, contentType, includeAllContentTypes } = options;
+    const { repoId, commitSha, query, language, pathPattern, cursor, contentType, includeAllContentTypes, hybrid, boost } = options;
 
     // Validate and apply limit
     const requestedLimit = options.limit ?? this.config.defaultLimit;
@@ -509,10 +525,30 @@ export class QueryOrchestrator {
       // Request more results than limit for re-ranking and pagination
       // We need extra results because re-ranking may change the order
       const searchLimit = Math.min(requestedLimit * 3, this.config.maxLimit);
-      let results = await this.vectors.search(queryVector, filters, searchLimit);
+      let results: SearchResult[];
+
+      // Hybrid search: combine vector search with SQI symbol search
+      if (hybrid && this.sqi) {
+        results = await this.executeHybridSearch(
+          query,
+          queryVector,
+          filters,
+          searchLimit,
+          repoId,
+          commitSha
+        );
+      } else {
+        // Vector-only search
+        results = await this.vectors.search(queryVector, filters, searchLimit);
+      }
 
       // Apply symbol boosting and re-rank
       results = reRankResults(results, parsedQuery);
+
+      // Apply structural boosting if enabled
+      if (boost) {
+        results = this.applyStructuralBoost(results);
+      }
 
       // Apply cursor-based filtering for pagination
       if (cursor) {
@@ -567,6 +603,218 @@ export class QueryOrchestrator {
         QueryErrorCode.SEARCH_FAILED
       );
     }
+  }
+
+  /**
+   * Apply structural boosting to search results
+   * Penalizes test files, boosts source files
+   */
+  private applyStructuralBoost(results: SearchResult[]): SearchResult[] {
+    const boosted = results.map((result) => {
+      let factor = 1.0;
+      const filePath = result.payload.path;
+
+      // Apply penalties
+      for (const rule of this.structuralBoostConfig.penalties) {
+        if (filePath.includes(rule.pattern)) {
+          factor *= rule.factor;
+        }
+      }
+
+      // Apply bonuses
+      for (const rule of this.structuralBoostConfig.bonuses) {
+        if (filePath.includes(rule.pattern)) {
+          factor *= rule.factor;
+        }
+      }
+
+      return {
+        ...result,
+        score: result.score * factor,
+      };
+    });
+
+    // Re-sort by adjusted score
+    boosted.sort((a, b) => b.score - a.score);
+    return boosted;
+  }
+
+  /**
+   * Execute hybrid search combining vector and SQI results with RRF
+   *
+   * Uses Reciprocal Rank Fusion to combine:
+   * - Vector search results (semantic similarity)
+   * - SQI symbol matches (structural, name-based)
+   */
+  private async executeHybridSearch(
+    query: string,
+    queryVector: EmbeddingVector,
+    filters: SearchFilters,
+    limit: number,
+    repoId: string,
+    commitSha: string
+  ): Promise<SearchResult[]> {
+    // Get commit ID for SQI queries
+    const commitRecord = this.metadata.getIndexedCommit(repoId, commitSha);
+    if (!commitRecord) {
+      // Fall back to vector-only search
+      return this.vectors.search(queryVector, filters, limit);
+    }
+
+    // Execute vector search (async) and SQI search (sync)
+    const vectorResults = await this.vectors.search(queryVector, filters, limit);
+    const sqiResults = this.executeSqiSearch(query, commitRecord.id, limit);
+
+    // If no SQI results, return vector results directly
+    if (sqiResults.length === 0) {
+      return vectorResults;
+    }
+
+    // Build a map of vector results by file+line for merging
+    const vectorByKey = new Map<string, SearchResult>();
+    for (const result of vectorResults) {
+      const key = `${result.payload.path}:${result.payload.start_line}`;
+      vectorByKey.set(key, result);
+    }
+
+    // Apply RRF scoring
+    const k = 60; // Standard RRF constant
+    const scores = new Map<string, { score: number; result: SearchResult }>();
+
+    // Add vector results with RRF scores
+    for (let rank = 0; rank < vectorResults.length; rank++) {
+      const result = vectorResults[rank];
+      if (!result) continue;
+      const key = `${result.payload.path}:${result.payload.start_line}`;
+      const rrfScore = 1.0 / (k + rank + 1);
+      scores.set(key, { score: rrfScore, result });
+    }
+
+    // Add SQI results with RRF scores, merging with vector results if overlap
+    for (let rank = 0; rank < sqiResults.length; rank++) {
+      const sqiResult = sqiResults[rank];
+      if (!sqiResult) continue;
+      const key = `${sqiResult.symbol.file_path}:${sqiResult.symbol.start_line}`;
+      const rrfScore = 1.0 / (k + rank + 1);
+
+      const existing = scores.get(key);
+      if (existing) {
+        // Merge scores - this symbol was found by both methods
+        existing.score += rrfScore;
+      } else {
+        // Check if we have a vector result for this file (different line)
+        const vectorResult = vectorByKey.get(key);
+        if (vectorResult) {
+          scores.set(key, { score: rrfScore, result: vectorResult });
+        } else {
+          // Create a synthetic result from SQI data
+          scores.set(key, {
+            score: rrfScore,
+            result: {
+              id: `sqi:${sqiResult.symbol.id}`,
+              score: sqiResult.similarity ?? 0.5,
+              payload: {
+                repo_id: repoId,
+                commits: [commitSha],
+                branches: [],
+                path: sqiResult.symbol.file_path,
+                symbol: sqiResult.symbol.name,
+                symbol_type: sqiResult.symbol.symbol_kind,
+                language: '',
+                content_type: 'code',
+                start_line: sqiResult.symbol.start_line,
+                end_line: sqiResult.symbol.end_line,
+                content: `// Symbol: ${sqiResult.symbol.qualified_name}`,
+              },
+            },
+          });
+        }
+      }
+    }
+
+    // Sort by combined RRF score and return
+    const merged = Array.from(scores.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ score, result }) => ({ ...result, score }));
+
+    return merged;
+  }
+
+  /**
+   * Execute SQI symbol search based on query terms
+   * Returns symbols matching the query terms with similarity scores
+   */
+  private executeSqiSearch(
+    query: string,
+    commitId: number,
+    limit: number
+  ): Array<{ symbol: { id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; start_line: number; end_line: number }; similarity: number }> {
+    if (!this.sqi) {
+      return [];
+    }
+
+    // Extract search terms from the query
+    const terms = extractSearchTerms(query);
+    if (terms.length === 0) {
+      return [];
+    }
+
+    // Search for each term and combine results
+    type SqiSearchResult = { symbol: { id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; start_line: number; end_line: number }; similarity: number };
+    const allResults: SqiSearchResult[] = [];
+    const seenIds = new Set<number>();
+
+    for (const term of terms) {
+      // Use fuzzy search for better recall
+      const fuzzyResults = this.sqi.findSymbolsFuzzy(commitId, term, {
+        minSimilarity: 0.3,
+        limit: Math.ceil(limit / terms.length),
+      });
+
+      for (const result of fuzzyResults) {
+        if (!seenIds.has(result.symbol.id)) {
+          seenIds.add(result.symbol.id);
+          allResults.push({
+            symbol: {
+              id: result.symbol.id,
+              name: result.symbol.name,
+              qualified_name: result.symbol.qualified_name,
+              symbol_kind: result.symbol.symbol_kind,
+              file_path: result.symbol.file_path,
+              start_line: result.symbol.start_line,
+              end_line: result.symbol.end_line,
+            },
+            similarity: result.similarity,
+          });
+        }
+      }
+
+      // Also try exact pattern match for substrings
+      const pattern = `%${term}%`;
+      const patternResults = this.sqi.findSymbolsByPattern(commitId, pattern);
+      for (const symbol of patternResults.slice(0, Math.ceil(limit / terms.length))) {
+        if (!seenIds.has(symbol.id)) {
+          seenIds.add(symbol.id);
+          allResults.push({
+            symbol: {
+              id: symbol.id,
+              name: symbol.name,
+              qualified_name: symbol.qualified_name,
+              symbol_kind: symbol.symbol_kind,
+              file_path: symbol.file_path,
+              start_line: symbol.start_line,
+              end_line: symbol.end_line,
+            },
+            similarity: 0.5, // Default similarity for pattern matches
+          });
+        }
+      }
+    }
+
+    // Sort by similarity and limit
+    allResults.sort((a, b) => b.similarity - a.similarity);
+    return allResults.slice(0, limit);
   }
 
   /**
@@ -688,7 +936,8 @@ export function createQueryOrchestrator(
   metadata: MetadataStorage,
   vectors: VectorStorage,
   embeddings: EmbeddingProvider,
-  config?: QueryConfig
+  config?: QueryConfig,
+  sqi?: SQIStorage | null
 ): QueryOrchestrator {
-  return new QueryOrchestrator(metadata, vectors, embeddings, config);
+  return new QueryOrchestrator(metadata, vectors, embeddings, config, sqi ?? null);
 }
