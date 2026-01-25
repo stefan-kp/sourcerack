@@ -83,25 +83,37 @@ export interface BoostConfig {
  */
 export const DEFAULT_BOOST_CONFIG: BoostConfig = {
   penalties: [
+    // Test files by name pattern
     { pattern: '_test.', factor: 0.5 },
     { pattern: '.test.', factor: 0.5 },
     { pattern: '.spec.', factor: 0.5 },
+    { pattern: '_spec.', factor: 0.5 },
+    // Test directories - both inner and root-level
     { pattern: '/test/', factor: 0.5 },
     { pattern: '/tests/', factor: 0.5 },
+    { pattern: 'tests/', factor: 0.5 },     // Root-level tests/
     { pattern: '/__tests__/', factor: 0.5 },
+    // Mock/fixture files
     { pattern: '/mock/', factor: 0.4 },
     { pattern: '/mocks/', factor: 0.4 },
     { pattern: '/fixture/', factor: 0.4 },
     { pattern: '/fixtures/', factor: 0.4 },
+    { pattern: '.mock.', factor: 0.4 },
+    // Generated/minified files
     { pattern: '.min.', factor: 0.3 },
     { pattern: '.generated.', factor: 0.4 },
+    { pattern: '/generated/', factor: 0.4 },
+    { pattern: '/dist/', factor: 0.4 },
+    { pattern: '/build/', factor: 0.4 },
   ],
   bonuses: [
-    { pattern: '/src/', factor: 1.1 },
-    { pattern: '/lib/', factor: 1.1 },
-    { pattern: '/app/', factor: 1.1 },
-    { pattern: '/core/', factor: 1.15 },
+    { pattern: '/src/', factor: 1.2 },      // Increased from 1.1
+    { pattern: '/lib/', factor: 1.15 },
+    { pattern: '/app/', factor: 1.15 },
+    { pattern: '/core/', factor: 1.2 },     // Increased from 1.15
     { pattern: '/internal/', factor: 1.1 },
+    { pattern: '/pkg/', factor: 1.1 },      // Go convention
+    { pattern: '/cmd/', factor: 1.1 },      // Go convention
   ],
 };
 

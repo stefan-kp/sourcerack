@@ -266,7 +266,8 @@ export function registerQueryCommand(program: Command): void {
     .option('--repos <names...>', 'Search only in specific repositories (by name)')
     .option('-g, --group <name>', 'Search repositories in named group')
     .option('--hybrid', 'Enable hybrid search (vector + SQI with RRF fusion)')
-    .option('--boost', 'Enable structural boosting (penalize test files, boost source files)')
+    .option('--boost', 'Enable structural boosting - penalize test files, boost source (default: true)', true)
+    .option('--no-boost', 'Disable structural boosting')
     .action(async (searchQuery: string, repoPath: string | undefined, options: QueryOptions) => {
       await executeQuery(searchQuery, repoPath, options);
     });

@@ -529,25 +529,31 @@ export class QueryOrchestrator {
 
       // Hybrid search: combine vector search with SQI symbol search
       if (hybrid && this.sqi) {
+        // For hybrid search, apply boost BEFORE fusion so it affects ranking
         results = await this.executeHybridSearch(
           query,
           queryVector,
           filters,
           searchLimit,
           repoId,
-          commitSha
+          commitSha,
+          boost
         );
       } else {
         // Vector-only search
         results = await this.vectors.search(queryVector, filters, searchLimit);
+
+        // Apply structural boosting if enabled (for non-hybrid)
+        if (boost) {
+          results = this.applyStructuralBoost(results);
+        }
       }
 
       // Apply symbol boosting and re-rank
-      results = reRankResults(results, parsedQuery);
-
-      // Apply structural boosting if enabled
-      if (boost) {
-        results = this.applyStructuralBoost(results);
+      // Skip this when structural boost is enabled, as symbol name matching
+      // can elevate test utilities (e.g., createMockVector) over real implementations
+      if (!boost) {
+        results = reRankResults(results, parsedQuery);
       }
 
       // Apply cursor-based filtering for pagination
@@ -606,6 +612,29 @@ export class QueryOrchestrator {
   }
 
   /**
+   * Calculate boost factor for a file path
+   */
+  private getBoostFactor(filePath: string): number {
+    let factor = 1.0;
+
+    // Apply penalties
+    for (const rule of this.structuralBoostConfig.penalties) {
+      if (filePath.includes(rule.pattern)) {
+        factor *= rule.factor;
+      }
+    }
+
+    // Apply bonuses
+    for (const rule of this.structuralBoostConfig.bonuses) {
+      if (filePath.includes(rule.pattern)) {
+        factor *= rule.factor;
+      }
+    }
+
+    return factor;
+  }
+
+  /**
    * Apply structural boosting to search results
    * Penalizes test files, boosts source files
    */
@@ -652,62 +681,150 @@ export class QueryOrchestrator {
     filters: SearchFilters,
     limit: number,
     repoId: string,
-    commitSha: string
+    commitSha: string,
+    applyBoost = false
   ): Promise<SearchResult[]> {
     // Get commit ID for SQI queries
     const commitRecord = this.metadata.getIndexedCommit(repoId, commitSha);
     if (!commitRecord) {
       // Fall back to vector-only search
-      return this.vectors.search(queryVector, filters, limit);
+      let results = await this.vectors.search(queryVector, filters, limit);
+      if (applyBoost) {
+        results = this.applyStructuralBoost(results);
+      }
+      return results;
     }
 
     // Execute vector search (async) and SQI search (sync)
-    const vectorResults = await this.vectors.search(queryVector, filters, limit);
+    let vectorResults = await this.vectors.search(queryVector, filters, limit);
     const sqiResults = this.executeSqiSearch(query, commitRecord.id, limit);
 
-    // If no SQI results, return vector results directly
+    // Apply structural boosting to vector results BEFORE fusion
+    // This ensures test files are ranked lower before RRF combines the lists
+    if (applyBoost) {
+      vectorResults = this.applyStructuralBoost(vectorResults);
+    }
+
+    // If no SQI results, return vector results directly (already boosted)
     if (sqiResults.length === 0) {
       return vectorResults;
     }
 
-    // Build a map of vector results by file+line for merging
+    // Build maps for vector results:
+    // 1. By exact file+line for direct matches
+    // 2. By file for finding overlapping ranges
     const vectorByKey = new Map<string, SearchResult>();
+    const vectorByFile = new Map<string, SearchResult[]>();
     for (const result of vectorResults) {
       const key = `${result.payload.path}:${result.payload.start_line}`;
       vectorByKey.set(key, result);
+
+      // Also index by file for range lookups
+      const fileResults = vectorByFile.get(result.payload.path) ?? [];
+      fileResults.push(result);
+      vectorByFile.set(result.payload.path, fileResults);
     }
 
-    // Apply RRF scoring
+    // Helper to find a vector result that overlaps with a given line range
+    const findOverlappingVectorResult = (
+      filePath: string,
+      startLine: number,
+      endLine: number
+    ): SearchResult | undefined => {
+      const fileResults = vectorByFile.get(filePath);
+      if (!fileResults) return undefined;
+
+      // Find a result whose range overlaps with the SQI symbol
+      return fileResults.find((r) => {
+        const vStart = r.payload.start_line;
+        const vEnd = r.payload.end_line;
+        // Check for overlap: ranges overlap if one starts before the other ends
+        return vStart <= endLine && vEnd >= startLine;
+      });
+    };
+
+    // Apply RRF scoring with weights
+    // Vector search is semantic (understands intent), SQI is structural (matches names)
+    // We weight vector higher (2.0) because:
+    // 1. Vector understands "error handling" means handleError(), not a property named "error"
+    // 2. SQI is good for boosting results that also match symbol names, but shouldn't dominate
     const k = 60; // Standard RRF constant
+    const vectorWeight = 2.0; // Weight for vector (semantic) results
+    const sqiWeight = 1.0;    // Weight for SQI (structural) results
     const scores = new Map<string, { score: number; result: SearchResult }>();
 
-    // Add vector results with RRF scores
+    // Add vector results with weighted RRF scores
     for (let rank = 0; rank < vectorResults.length; rank++) {
       const result = vectorResults[rank];
       if (!result) continue;
       const key = `${result.payload.path}:${result.payload.start_line}`;
-      const rrfScore = 1.0 / (k + rank + 1);
+      const rrfScore = vectorWeight / (k + rank + 1);
       scores.set(key, { score: rrfScore, result });
     }
 
-    // Add SQI results with RRF scores, merging with vector results if overlap
-    for (let rank = 0; rank < sqiResults.length; rank++) {
-      const sqiResult = sqiResults[rank];
+    // Apply structural boosting to SQI results if enabled
+    // We need to boost SQI results too, otherwise test files with matching symbol names dominate
+    let rankedSqiResults = sqiResults;
+    if (applyBoost) {
+      // Sort SQI results by boosted similarity score
+      // This combines the similarity with the path-based boost factor
+      rankedSqiResults = [...sqiResults]
+        .map((r) => ({
+          ...r,
+          boostedSimilarity: r.similarity * this.getBoostFactor(r.symbol.file_path),
+        }))
+        .sort((a, b) => b.boostedSimilarity - a.boostedSimilarity);
+    }
+
+    // Add SQI results with weighted RRF scores, merging with vector results if overlap
+    for (let rank = 0; rank < rankedSqiResults.length; rank++) {
+      const sqiResult = rankedSqiResults[rank];
       if (!sqiResult) continue;
+
+      // When boosting is enabled, skip SQI results from test files entirely
+      // This prevents test utilities (e.g., createMockVector) from dominating
+      // when their names happen to match search terms
+      const boostFactor = this.getBoostFactor(sqiResult.symbol.file_path);
+      if (applyBoost && boostFactor < 0.6) {
+        // Skip results from penalized paths (tests, mocks, fixtures)
+        continue;
+      }
+
       const key = `${sqiResult.symbol.file_path}:${sqiResult.symbol.start_line}`;
-      const rrfScore = 1.0 / (k + rank + 1);
+      const rrfScore = sqiWeight / (k + rank + 1);
 
       const existing = scores.get(key);
       if (existing) {
         // Merge scores - this symbol was found by both methods
         existing.score += rrfScore;
       } else {
-        // Check if we have a vector result for this file (different line)
-        const vectorResult = vectorByKey.get(key);
+        // Try to find a vector result for this file:
+        // 1. First check exact line match
+        // 2. Then check for overlapping ranges (symbol might span multiple chunks)
+        let vectorResult = vectorByKey.get(key);
+        if (!vectorResult) {
+          vectorResult = findOverlappingVectorResult(
+            sqiResult.symbol.file_path,
+            sqiResult.symbol.start_line,
+            sqiResult.symbol.end_line
+          );
+        }
+
         if (vectorResult) {
-          scores.set(key, { score: rrfScore, result: vectorResult });
+          // Use the vector result (has real content) but update symbol info from SQI
+          scores.set(key, {
+            score: rrfScore,
+            result: {
+              ...vectorResult,
+              payload: {
+                ...vectorResult.payload,
+                symbol: sqiResult.symbol.name,
+                symbol_type: sqiResult.symbol.symbol_kind,
+              },
+            },
+          });
         } else {
-          // Create a synthetic result from SQI data
+          // Create a synthetic result from SQI data (no vector content available)
           scores.set(key, {
             score: rrfScore,
             result: {
@@ -744,6 +861,10 @@ export class QueryOrchestrator {
   /**
    * Execute SQI symbol search based on query terms
    * Returns symbols matching the query terms with similarity scores
+   *
+   * Only searches for "meaningful" symbol types (functions, classes, methods, etc.)
+   * Excludes properties, variables, and other low-level symbols that don't
+   * represent the actual code implementation.
    */
   private executeSqiSearch(
     query: string,
@@ -760,6 +881,37 @@ export class QueryOrchestrator {
       return [];
     }
 
+    // Symbol kinds that represent meaningful code blocks (not properties/variables)
+    const MEANINGFUL_SYMBOL_KINDS = new Set([
+      'function',
+      'method',
+      'class',
+      'interface',
+      'type',
+      'enum',
+      'module',
+      'namespace',
+      'struct',
+      'trait',
+      'impl',
+      // Language-specific
+      'def',           // Python
+      'func',          // Go
+      'fn',            // Rust
+      'sub',           // Perl/VB
+      'proc',          // Pascal
+      'constructor',
+      'destructor',
+      'getter',
+      'setter',
+    ]);
+
+    // Filter function to check if symbol kind is meaningful
+    const isMeaningfulSymbol = (kind: string): boolean => {
+      const normalizedKind = kind.toLowerCase();
+      return MEANINGFUL_SYMBOL_KINDS.has(normalizedKind);
+    };
+
     // Search for each term and combine results
     type SqiSearchResult = { symbol: { id: number; name: string; qualified_name: string; symbol_kind: string; file_path: string; start_line: number; end_line: number }; similarity: number };
     const allResults: SqiSearchResult[] = [];
@@ -768,11 +920,15 @@ export class QueryOrchestrator {
     for (const term of terms) {
       // Use fuzzy search for better recall
       const fuzzyResults = this.sqi.findSymbolsFuzzy(commitId, term, {
-        minSimilarity: 0.3,
-        limit: Math.ceil(limit / terms.length),
+        minSimilarity: 0.4, // Increased from 0.3 for better precision
+        limit: Math.ceil(limit * 2 / terms.length), // Fetch more to filter
       });
 
       for (const result of fuzzyResults) {
+        // Skip non-meaningful symbol types (properties, variables, etc.)
+        if (!isMeaningfulSymbol(result.symbol.symbol_kind)) {
+          continue;
+        }
         if (!seenIds.has(result.symbol.id)) {
           seenIds.add(result.symbol.id);
           allResults.push({
@@ -793,7 +949,11 @@ export class QueryOrchestrator {
       // Also try exact pattern match for substrings
       const pattern = `%${term}%`;
       const patternResults = this.sqi.findSymbolsByPattern(commitId, pattern);
-      for (const symbol of patternResults.slice(0, Math.ceil(limit / terms.length))) {
+      for (const symbol of patternResults.slice(0, Math.ceil(limit * 2 / terms.length))) {
+        // Skip non-meaningful symbol types
+        if (!isMeaningfulSymbol(symbol.symbol_kind)) {
+          continue;
+        }
         if (!seenIds.has(symbol.id)) {
           seenIds.add(symbol.id);
           allResults.push({
