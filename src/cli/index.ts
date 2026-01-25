@@ -17,6 +17,7 @@ import { registerFindUsagesCommand } from './commands/find-usages.js';
 import { registerHierarchyCommand } from './commands/hierarchy.js';
 import { registerDependenciesCommand, registerDependentsCommand } from './commands/imports.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerInitCommand } from './commands/init.js';
 // Agent-focused commands
 import { registerSummaryCommand } from './commands/summary.js';
 import { registerContextCommand } from './commands/context.js';
@@ -54,8 +55,9 @@ function createProgram(): Command {
   registerDependenciesCommand(program);
   registerDependentsCommand(program);
 
-  // Setup command
+  // Setup and init commands
   registerSetupCommand(program);
+  registerInitCommand(program);
 
   // Agent-focused commands
   registerSummaryCommand(program);

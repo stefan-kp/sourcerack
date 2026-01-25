@@ -11,9 +11,18 @@ import { homedir } from 'node:os';
 import {
   SourceRackConfig,
   SourceRackConfigSchema,
+  ProjectConfigSchema,
   DEFAULT_CONFIG,
   validateConfig,
+  type ProjectConfig,
+  type BoostConfig,
+  type SqiBoostConfig,
 } from './schema.js';
+import {
+  detectFramework,
+  FRAMEWORK_PRESETS,
+  getBoostConfigForFramework,
+} from './frameworks.js';
 
 /**
  * Configuration file names to search for in project directories (in order of priority)
@@ -281,4 +290,113 @@ export function getGlobalConfigDir(): string {
  */
 export function getGlobalConfigPath(): string {
   return GLOBAL_CONFIG_FILE;
+}
+
+/**
+ * Project configuration file names to search for
+ */
+const PROJECT_CONFIG_FILE_NAMES = [
+  'sourcerack.config.json',
+  'sourcerack.json',
+  '.sourcerackrc.json',
+];
+
+/**
+ * Find project-specific configuration file
+ */
+function findProjectConfigFile(startDir: string = process.cwd()): string | null {
+  let currentDir = resolve(startDir);
+  const root = resolve('/');
+
+  while (currentDir !== root) {
+    for (const fileName of PROJECT_CONFIG_FILE_NAMES) {
+      const filePath = resolve(currentDir, fileName);
+      if (existsSync(filePath)) {
+        return filePath;
+      }
+    }
+    currentDir = resolve(currentDir, '..');
+  }
+
+  return null;
+}
+
+/**
+ * Load project-specific configuration if available
+ *
+ * @param projectPath - Path to project directory (default: cwd)
+ * @returns Project config if found, null otherwise
+ */
+export function loadProjectConfig(projectPath: string = process.cwd()): ProjectConfig | null {
+  const configPath = findProjectConfigFile(projectPath);
+  if (!configPath) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(content) as unknown;
+    return ProjectConfigSchema.parse(parsed);
+  } catch {
+    // Invalid config file - ignore and return null
+    return null;
+  }
+}
+
+/**
+ * Get effective boost configuration for a project
+ *
+ * Priority:
+ * 1. Project-specific boost config (from sourcerack.config.json)
+ * 2. Framework-detected defaults
+ * 3. Global defaults
+ *
+ * @param projectPath - Path to project directory
+ * @returns Effective boost configuration
+ */
+export function getEffectiveBoostConfig(projectPath: string = process.cwd()): BoostConfig {
+  // Try to load project config first
+  const projectConfig = loadProjectConfig(projectPath);
+  if (projectConfig?.boost) {
+    // Project has explicit boost config
+    if (projectConfig.framework !== 'auto' && projectConfig.framework !== 'custom') {
+      // Merge framework defaults with custom overrides
+      return getBoostConfigForFramework(projectConfig.framework, projectConfig.boost);
+    }
+    return projectConfig.boost;
+  }
+
+  // Try framework detection
+  const detected = detectFramework(projectPath);
+  if (detected.preset !== 'custom') {
+    return FRAMEWORK_PRESETS[detected.preset];
+  }
+
+  // Fall back to generic defaults
+  return {
+    enabled: true,
+    penalties: [],
+    bonuses: [],
+  };
+}
+
+/**
+ * Get SQI boosting configuration for a project
+ *
+ * @param projectPath - Path to project directory
+ * @returns SQI boost settings per command
+ */
+export function getSqiBoostConfig(projectPath: string = process.cwd()): SqiBoostConfig {
+  const projectConfig = loadProjectConfig(projectPath);
+  if (projectConfig?.sqiBoosting) {
+    return projectConfig.sqiBoosting;
+  }
+
+  // Default SQI boost settings
+  return {
+    findDef: true,
+    findUsages: false,
+    callGraph: true,
+    query: true,
+  };
 }

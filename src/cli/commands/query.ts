@@ -11,6 +11,8 @@ import { formatQueryResults, type QueryOutputDisplay, type QueryResultDisplay } 
 import { handleError, ExitCode, AgentErrors, exitWithAgentError } from '../errors.js';
 import { createQueryOrchestrator } from '../../indexer/query.js';
 import { parseReposOption, resolveRepoIdentifiers, resolveGroupRepos } from '../repo-filter.js';
+import { getEffectiveBoostConfig } from '../../config/config.js';
+import type { BoostConfig as HybridBoostConfig } from '../../search/hybrid.js';
 
 /**
  * Query command options
@@ -58,13 +60,23 @@ async function executeQuery(searchQuery: string, repoPath: string | undefined, o
       // Get SQI storage for hybrid search
       const sqi = options.hybrid ? context.metadata.getSQIStorage() : null;
 
-      // Create query orchestrator
+      // Load project-specific boost configuration
+      const projectBoostConfig = getEffectiveBoostConfig(repoContext?.repoPath ?? process.cwd());
+
+      // Convert schema boost config to hybrid boost config format
+      const structuralBoostConfig: HybridBoostConfig = {
+        penalties: projectBoostConfig.penalties,
+        bonuses: projectBoostConfig.bonuses,
+      };
+
+      // Create query orchestrator with project-specific boost config
       const queryOrchestrator = createQueryOrchestrator(
         context.metadata,
         context.vectors,
         context.embeddings,
-        undefined, // Use default config
-        sqi
+        undefined, // Use default query config
+        sqi,
+        structuralBoostConfig
       );
 
       if (isMultiRepo) {

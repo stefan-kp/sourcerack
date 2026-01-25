@@ -1097,7 +1097,8 @@ export function createQueryOrchestrator(
   vectors: VectorStorage,
   embeddings: EmbeddingProvider,
   config?: QueryConfig,
-  sqi?: SQIStorage | null
+  sqi?: SQIStorage | null,
+  structuralBoostConfig?: StructuralBoostConfig
 ): QueryOrchestrator {
-  return new QueryOrchestrator(metadata, vectors, embeddings, config, sqi ?? null);
+  return new QueryOrchestrator(metadata, vectors, embeddings, config, sqi ?? null, structuralBoostConfig);
 }

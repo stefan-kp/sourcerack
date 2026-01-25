@@ -130,6 +130,70 @@ export const GroupsConfigSchema = z.object({
 });
 
 /**
+ * Boost rule configuration
+ */
+export const BoostRuleSchema = z.object({
+  /** Pattern to match against file path (substring match) */
+  pattern: z.string(),
+  /** Multiplicative factor (< 1 = penalty, > 1 = bonus) */
+  factor: z.number().min(0.1).max(3.0),
+});
+
+/**
+ * Boost configuration for search result ranking
+ */
+export const BoostConfigSchema = z.object({
+  /** Enable structural boosting (default: true) */
+  enabled: z.boolean().default(true),
+  /** Patterns that reduce score (test files, generated code) */
+  penalties: z.array(BoostRuleSchema).default([]),
+  /** Patterns that increase score (source directories) */
+  bonuses: z.array(BoostRuleSchema).default([]),
+});
+
+/**
+ * SQI boosting configuration per command
+ */
+export const SqiBoostConfigSchema = z.object({
+  /** Enable boosting for find-def command */
+  findDef: z.boolean().default(true),
+  /** Enable boosting for find-usages command */
+  findUsages: z.boolean().default(false),
+  /** Enable boosting for call-graph command */
+  callGraph: z.boolean().default(true),
+  /** Enable boosting for semantic query command */
+  query: z.boolean().default(true),
+});
+
+/**
+ * Framework-specific presets
+ */
+export const FrameworkPresetSchema = z.enum([
+  'auto',       // Auto-detect
+  'rails',      // Ruby on Rails
+  'nodejs',     // Node.js / Express / Nest.js
+  'go',         // Go
+  'python',     // Python / Django / Flask
+  'java',       // Java / Spring
+  'rust',       // Rust
+  'custom',     // User-defined
+]);
+
+/**
+ * Project configuration (stored in project's sourcerack.config.json)
+ */
+export const ProjectConfigSchema = z.object({
+  /** Framework preset for boost patterns */
+  framework: FrameworkPresetSchema.default('auto'),
+  /** Custom boost configuration (overrides framework defaults) */
+  boost: BoostConfigSchema.optional(),
+  /** SQI boosting per command */
+  sqiBoosting: SqiBoostConfigSchema.default({}),
+  /** Priority source directories (highest priority first) */
+  priorityDirs: z.array(z.string()).default([]),
+});
+
+/**
  * SQLite metadata storage configuration
  *
  * Default location is cross-platform:
@@ -172,6 +236,11 @@ export type GCConfig = z.infer<typeof GCConfigSchema>;
 export type StorageConfig = z.infer<typeof StorageConfigSchema>;
 export type RepoGroup = z.infer<typeof RepoGroupSchema>;
 export type SourceRackConfig = z.infer<typeof SourceRackConfigSchema>;
+export type BoostRule = z.infer<typeof BoostRuleSchema>;
+export type BoostConfig = z.infer<typeof BoostConfigSchema>;
+export type SqiBoostConfig = z.infer<typeof SqiBoostConfigSchema>;
+export type FrameworkPreset = z.infer<typeof FrameworkPresetSchema>;
+export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 /**
  * Default configuration (all defaults applied)
