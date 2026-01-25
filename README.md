@@ -33,10 +33,11 @@ SourceRack combines AST-based symbol extraction with semantic embeddings to give
 ### 1. Install
 
 ```bash
-git clone https://github.com/yourusername/sourcerack.git
-cd sourcerack
-npm install && npm run build
-npm link  # optional: make 'sourcerack' available globally
+# Global installation
+npm install -g sourcerack
+
+# Or run without installing
+npx sourcerack --help
 ```
 
 ### 2. Index Your Code
