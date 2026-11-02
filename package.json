@@ -64,7 +64,7 @@
     "tree-sitter-rust": "^0.21.0",
     "tree-sitter-typescript": "^0.21.0",
     "yaml": "^2.7.0",
-    "zod": "^3.24.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
